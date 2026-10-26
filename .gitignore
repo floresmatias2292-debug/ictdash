@@ -14,3 +14,6 @@ research/*.pkl
 .vscode/
 .idea/
 .DS_Store
+
+# Secrets (X / Twitter keys)
+.env

@@ -20,7 +20,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, prob, stats
+from . import data, ict, prob, social, stats
 from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, SETTINGS, SOURCE_LABEL, SYMBOLS,
                      TRADINGVIEW_SYMBOL)
 from .portfolio import fee_pct, max_lev
@@ -244,6 +244,30 @@ def _row_candle(r) -> dict:
             "buy_pct": (tb / v * 100) if (tb is not None and v) else None}
 
 
+async def social_loop():
+    """X (Twitter) tweets about the AMD / NVDA perps, every X_POLL_SEC (default 5 min), when a key is in .env."""
+    async with httpx.AsyncClient() as client:
+        while True:
+            if social.provider():
+                try:
+                    new = await social.poll(client)
+                    META["last_social"], META["social_error"] = time.time(), None
+                    seen = {a["id"] for a in ALERTS}
+                    for sym in new:
+                        s = social.summary(sym)
+                        if s and s["buzz"] and s["buzz"] >= 3 and s["h1"]["n"] >= 10:
+                            snt = s["h1"]["sent"] or 0
+                            _push(seen, sym, "X", "social", 1 if snt >= 0 else -1,
+                                  f"X buzz {s['buzz']:.1f}× ({s['h1']['n']} tweets/h) · sentiment {snt:+.2f}",
+                                  int(time.time()) // 3600 * 3600)
+                    if any(new.values()):
+                        await broadcast({"type": "social", "social": {s_: social.summary(s_) for s_ in new}, "meta": META})
+                except Exception as e:
+                    META["social_error"] = str(e)[:200]
+                    log.warning("social: %s", e)
+            await asyncio.sleep(social.poll_sec())
+
+
 def _refresh_all(full: bool):
     errors = {}
     for sym in SYMBOLS:
@@ -290,7 +314,8 @@ async def lifespan(app):
         log.warning("omni at startup: %s", e)
     _closed_changed()
     await asyncio.to_thread(recompute)
-    tasks = [asyncio.create_task(omni_loop()), asyncio.create_task(candle_loop()), asyncio.create_task(oracle_loop())]
+    tasks = [asyncio.create_task(omni_loop()), asyncio.create_task(candle_loop()), asyncio.create_task(oracle_loop()),
+             asyncio.create_task(social_loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -394,6 +419,7 @@ def api_state(symbol: str = "NVDA"):
                        "max_lev": max_lev(symbol, SETTINGS), "spread_bps": q.get("spread_bps") or SYMBOLS[symbol]["spread_bps"]},
             "charts": {tf: _chart(symbol, tf) for tf in VIEW_TFS},
             "oracle": ORACLE.get(symbol, {}),
+            "social": social.summary(symbol),
             "oracle_hist": [[_et(t), i, v] for t, i, v in data.load_oracle(symbol)],
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),
             "omni": {tf: _omni_chart(symbol, tf) for tf in VIEW_TFS},

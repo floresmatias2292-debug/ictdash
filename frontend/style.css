@@ -117,3 +117,17 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .buybar i { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(8,153,129,.75); }
 .tvbox { position: absolute; inset: 0; z-index: 6; background: var(--pane); }
 .tvbox.hidden { display: none; }
+
+/* X · Twitter */
+.spark { display: flex; align-items: flex-end; gap: 1px; height: 32px; margin: 8px 0 4px; }
+.spark i { flex: 1; background: var(--accent); opacity: .55; border-radius: 1px 1px 0 0; }
+.tweets { max-height: 360px; overflow: auto; margin-top: 4px; }
+.tweet { display: block; padding: 6px 0; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 12px; }
+.tweet:hover { background: var(--chrome); }
+.tweet .th { display: flex; gap: 4px; align-items: baseline; flex-wrap: wrap; }
+.tweet .ts { margin-left: auto; font-weight: 700; }
+.tweet .tt { margin: 2px 0; line-height: 1.4; overflow-wrap: anywhere; white-space: pre-line; }
+.tweet .tm { font-size: 11px; }
+.tweet .vb { color: var(--accent); }
+.chip { background: var(--chip); color: var(--muted); border-radius: 3px; padding: 0 4px; font-size: 10px; }
+code { font-size: 11px; background: var(--chip); padding: 0 3px; border-radius: 3px; overflow-wrap: anywhere; }

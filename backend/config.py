@@ -27,6 +27,14 @@ ORACLE_EVERY_S = 120          # the CoinGecko payload is ~9 MB, so not more ofte
 TRADINGVIEW_SYMBOL = {"NVDA": "BINANCE:NVDAUSDT.P", "AMD": "BINANCE:AMDUSDT.P", "SOXL": "BINANCE:SOXLUSDT.P",
                       "US100": "PEPPERSTONE:NAS100"}
 
+# X (Twitter) searches per symbol (backend/social.py). Cashtag, the Binance perp ticker, Omni's market name and
+# "perp" phrases; retweets are dropped by the provider filter. Edit freely (X API limit: 512 characters).
+SOCIAL_QUERIES = {
+    "AMD":  '($AMD OR AMDUSDT OR "AMD perp" OR "AMD perps" OR "AMD-PERP" OR "AMD perpetual" OR "AMD futures")',
+    "NVDA": '($NVDA OR NVDAUSDT OR "NVDA perp" OR "NVDA perps" OR "NVDA-PERP" OR "NVDA perpetual" OR "NVDA futures" '
+            'OR "Nvidia perp")',
+}
+
 GROUPS = {
     "semis": {"label": "Semis · Binance", "symbols": ["AMD", "NVDA", "SOXL"], "pair": ("AMD", "NVDA"), "hedge": "SOXL",
               "sector": ["AMD", "NVDA", "SOXL"], "fee_key": "fee_pct"},

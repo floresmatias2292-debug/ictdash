@@ -340,7 +340,33 @@ function renderPanel() {
     <table style="margin-top:6px"><tr><th>Predicted</th><th>n</th><th>Avg pred</th><th>Actual up</th></tr>${sk.calibration.map((b) => `<tr><td>${b.bin}</td><td>${b.n}</td><td>${(b.pred * 100).toFixed(0)}%</td><td>${(b.actual * 100).toFixed(0)}%</td></tr>`).join('')}</table>
     <div class="note">Large chart's timeframe. Regenerate with research/prob_validate.py.</div>` : '<div class="muted">No validation report.</div>';
   renderOracle();
+  renderSocial();
   renderAlerts(d.alerts);
+}
+// ── X (Twitter) ────────────────────────────────────────────────────────────
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ago = (ts) => { const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60)); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`; };
+const sentTag = (x) => x == null ? '<span class="muted">—</span>' : `<span class="${x > 0.1 ? 'bull' : x < -0.1 ? 'bear' : 'muted'}">${x > 0.1 ? 'Bullish' : x < -0.1 ? 'Bearish' : 'Neutral'} ${sgn(x)}</span>`;
+function renderSocial() {
+  const s = S.data?.social, box = $('#socialBlock');
+  $('#socialWrap').style.display = s ? '' : 'none';
+  if (!s) return;
+  const err = S.data.meta?.social_error;
+  if (!s.provider) {
+    box.innerHTML = `<div class="muted">Not connected.</div><div class="note">Create a file <b>.env</b> in the project folder with one line:<br><code>TWITTERAPI_IO_KEY=your_key</code> (twitterapi.io, ≈ $0.15 / 1,000 tweets) or<br><code>X_BEARER_TOKEN=your_token</code> (official X API, ≈ $5 / 1,000 tweets),<br>then restart the dashboard. Search: <code>${esc(s.query)}</code></div>`;
+    return;
+  }
+  const h1 = s.h1, h24 = s.h24, max = Math.max(1, ...s.hourly);
+  const spark = s.hourly.map((v, i) => `<i style="height:${Math.max(4, v / max * 100)}%" title="${v} tweets, ${48 - i}h ago"></i>`).join('');
+  const tw = (t) => `<a class="tweet" href="${esc(t.url)}" target="_blank" rel="noopener"><div class="th"><b>@${esc(t.user)}</b>${t.verified ? ' <span class="vb">✓</span>' : ''} <span class="muted">${vol(t.followers)} · ${ago(t.ts)}</span>${t.perp ? ' <span class="chip">perp</span>' : ''}<span class="ts ${t.sent > 0 ? 'bull' : t.sent < 0 ? 'bear' : 'muted'}">${t.sent > 0 ? '▲' : t.sent < 0 ? '▼' : '·'}</span></div><div class="tt">${esc(t.text)}</div><div class="muted tm">♥ ${vol(t.likes)} · ⟲ ${vol(t.rts)} · 💬 ${vol(t.replies)}${t.views ? ` · 👁 ${vol(t.views)}` : ''}</div></a>`;
+  box.innerHTML = `${err ? `<div class="warn">Last X read failed: ${esc(err)}</div>` : ''}
+    <div class="kv"><span>Buzz (1 h vs 24 h pace)</span><span class="${s.buzz >= 3 ? 'warn' : ''}">${s.buzz == null ? '—' : s.buzz.toFixed(1) + '×'} · ${h1.n} tweets/h</span>
+    <span>Sentiment 1 h</span><span>${sentTag(h1.sent)}</span><span>Sentiment 24 h</span><span>${sentTag(h24.sent)}</span>
+    <span>24 h ▲ / ▼ / perp</span><span><span class="bull">${h24.bull}</span> / <span class="bear">${h24.bear}</span> / ${h24.perp} of ${h24.n}</span></div>
+    <div class="spark" title="Tweets per hour, last 48 h">${spark}</div>
+    ${s.top.length ? `<details><summary class="note">Top tweets 24 h</summary>${s.top.map(tw).join('')}</details>` : ''}
+    <div class="tweets">${s.latest.length ? s.latest.map(tw).join('') : '<div class="muted">No tweets stored yet — first read within a few minutes.</div>'}</div>
+    <div class="note">${s.provider === 'x' ? 'Official X API' : 'twitterapi.io'} · every ${Math.round(s.poll_sec / 60)} min · today ${s.usage.tweets.toLocaleString()} / ${s.usage.cap.toLocaleString()} tweets ≈ $${s.usage.usd.toFixed(2)}</div>`;
 }
 function lastPrice() {
   const c = S.data?.charts['5m'];
@@ -436,6 +462,9 @@ function connect() {
         for (const tf of TFS) renderOracleLine(S.panes[tf]);
       }
       renderOracle();
+    } else if (m.type === 'social') {
+      if (!S.data || !m.social[S.sym]) return;
+      S.data.social = m.social[S.sym]; S.data.meta = m.meta; renderSocial();
     } else if (m.type === 'candles') {
       applyCandles(m.candles);
       setStatus(!m.meta.candle_error, m.meta.candle_error ? `${S.data?.market.source || 'Feed'} error` : `live 24/7 · ${fmtTime(m.meta.last_candles)}`);
