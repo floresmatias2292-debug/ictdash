@@ -201,10 +201,16 @@ function renderChart(tf) {
   p.candles.setMarkers(overlayData && !omni ? buildMarkers(overlayData) : []);
   if (range && p.fitted) p.chart.timeScale().setVisibleLogicalRange(range);
   else if (bars.length) { const n = bars.length; p.chart.timeScale().setVisibleLogicalRange(n < 120 ? { from: -2, to: Math.max(n + 4, 60) } : { from: n - 150, to: n + 6 }); p.fitted = true; }
+  let msg = null;
+  if (omni && bars.length < 3) msg = `Building ${S.data.market.omni} ${tf} candles from the live mark. The public Omni API has no history; the chart fills in while the server runs.`;
+  else if (!omni && !bars.length) {
+    const m = S.data.meta || {};
+    msg = m.loading ? `First start on this computer: downloading ${S.data.market.source} history. The chart appears by itself in a few minutes.`
+      : `No ${S.data.market.source} candles for ${S.sym} ${tf}.` + ((m.history_error?.[S.sym]) ? ` Error: ${m.history_error[S.sym]}. Check the internet connection / that ${S.data.market.source} is reachable from this network.` : ' Waiting for data…');
+  }
   const empty = $('.empty', p.el);
-  if (omni && bars.length < 3) {
-    if (!empty) p.el.insertAdjacentHTML('beforeend', `<div class="empty">Building ${S.data.market.omni} ${tf} candles from the live mark. The public Omni API has no history; the chart fills in while the server runs.</div>`);
-  } else empty?.remove();
+  if (msg) { if (empty) empty.textContent = msg; else p.el.insertAdjacentHTML('beforeend', `<div class="empty">${msg}</div>`); }
+  else empty?.remove();
   legend(p, null);
   badge(p);
 }
@@ -502,4 +508,5 @@ document.documentElement.dataset.theme = S.theme;
 window.OVERLAY_HALO = C().halo;
 for (const tf of TFS) makePane(tf);
 wire(); buildLayers(); applyLayout();
-load().then(connect).catch((e) => setStatus(false, `load failed: ${e}`));
+if (typeof LightweightCharts === 'undefined') setStatus(false, 'chart library did not load (static/vendor/lightweight-charts.js)');
+else load().then(connect).catch((e) => setStatus(false, `load failed: ${e}`));

@@ -116,9 +116,10 @@ def _hyperliquid_backfill(client: httpx.Client, sym: str, tf: str) -> int:
     return len(rows)
 
 
-def refresh_history(symbol: str, full: bool = False) -> None:
-    """Bring every timeframe up to date (backfills from the listing on the first run)."""
+def refresh_history(symbol: str, full: bool = False) -> list[str]:
+    """Bring every timeframe up to date (backfills from the listing on the first run). Returns the errors."""
     src = SYMBOLS[symbol]["source"]
+    errors = []
     with httpx.Client() as client:
         for tf in TIMEFRAMES:
             try:
@@ -127,6 +128,8 @@ def refresh_history(symbol: str, full: bool = False) -> None:
                     log.info("%s %s %s: %d bars", src, symbol, tf, n)
             except Exception as e:
                 log.warning("%s %s %s failed: %s", src, symbol, tf, e)
+                errors.append(f"{src} {symbol} {tf}: {e}")
+    return errors
 
 
 async def fetch_latest(client: httpx.AsyncClient, symbol: str, tf: str) -> list[tuple]:

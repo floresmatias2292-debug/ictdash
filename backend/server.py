@@ -38,7 +38,7 @@ STATE: dict = {}          # (symbol, tf) -> {bars, forming, res, prob}
 LIVE: dict = {}           # symbol -> Omni quote
 ORACLE: dict = {}         # symbol -> {consensus (CoinGecko), venue (Binance/Hyperliquid index), last}
 ALERTS: list = []
-META = {"version": 0, "last_calc": None, "last_candles": None, "candle_error": None, "last_omni": None, "omni_error": None}
+META = {"loading": False, "history_error": {}, "version": 0, "last_calc": None, "last_candles": None, "candle_error": None, "last_omni": None, "omni_error": None}
 _recalc_lock = asyncio.Lock()
 CLIENTS: set[WebSocket] = set()
 _last_closed: dict = {}
@@ -245,8 +245,12 @@ def _row_candle(r) -> dict:
 
 
 def _refresh_all(full: bool):
+    errors = {}
     for sym in SYMBOLS:
-        data.refresh_history(sym, full=full)
+        e = data.refresh_history(sym, full=full)
+        if e:
+            errors[sym] = e[0][:200]
+    META["history_error"] = errors
     META["last_candles"] = time.time()
 
 
@@ -266,7 +270,19 @@ def _closed_changed() -> bool:
 @asynccontextmanager
 async def lifespan(app):
     full = not all(data.has_history(s) for s in SYMBOLS)
-    await asyncio.to_thread(_refresh_all, full)
+    if full:
+        # First run on this computer: the page opens right away and fills in when the download finishes.
+        META["loading"] = True
+        log.info("first start: downloading history in the background (a few minutes)")
+
+        async def first_backfill():
+            await asyncio.to_thread(_refresh_all, True)
+            META["loading"] = False
+            _closed_changed()
+            await _recalc()
+        backfill = asyncio.create_task(first_backfill())
+    else:
+        await asyncio.to_thread(_refresh_all, False)
     try:
         async with httpx.AsyncClient() as client:
             LIVE.update(await data.fetch_omni(client))
