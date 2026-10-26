@@ -20,8 +20,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, prob, stats
-from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, SETTINGS, SOURCE_LABEL, SYMBOLS,
+from . import data, ict, pair, prob, stats
+from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, PAIRS, SETTINGS, SOURCE_LABEL, SYMBOLS,
                      TRADINGVIEW_SYMBOL)
 from .portfolio import fee_pct, max_lev
 
@@ -33,10 +33,12 @@ VIEW_TFS = ["5m", "15m", "1h"]
 HTF = {"5m": "1h", "15m": "1h", "1h": "4h"}
 CALC_TFS = ["5m", "15m", "1h", "4h"]
 REPORT = FRONTEND_DIR.parent / "research" / "prob_report.json"
+PAIR_REPORTS = {m: FRONTEND_DIR.parent / "research" / f"pair_report_{m}.json" for m in ("revert", "trend")}
 
 STATE: dict = {}          # (symbol, tf) -> {bars, forming, res, prob}
 LIVE: dict = {}           # symbol -> Omni quote
 ORACLE: dict = {}         # symbol -> {consensus (CoinGecko), venue (Binance/Hyperliquid index), last}
+PAIR_STATE: dict = {}     # pair group -> spread snapshot (β, z, history)
 ALERTS: list = []
 META = {"version": 0, "last_calc": None, "last_candles": None, "candle_error": None, "last_omni": None, "omni_error": None}
 _recalc_lock = asyncio.Lock()
@@ -49,6 +51,20 @@ def _report() -> dict:
         return json.loads(REPORT.read_text())
     except (OSError, ValueError):
         return {}
+
+
+def _pair_reports() -> dict:
+    out = {}
+    for m, path in PAIR_REPORTS.items():
+        try:
+            out[m] = json.loads(path.read_text())
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def _pair(g: str) -> dict:
+    return pair.suggest(PAIRS[g], PAIR_STATE.get(g), LIVE, SETTINGS, _pair_reports())
 
 
 # ── recompute ──────────────────────────────────────────────────────────────
@@ -96,6 +112,11 @@ def recompute() -> None:
                                           "atr": float(row["atr"].iloc[0]), "close": float(row["close"].iloc[0])}
     STATE.clear()
     STATE.update(new)
+    for g, cfg in PAIRS.items():
+        try:
+            PAIR_STATE[g] = pair.snapshot(cfg)
+        except Exception as e:
+            log.warning("pair %s: %s", g, e)
     _collect_alerts()
     META["version"] += 1
     META["last_calc"] = time.time()
@@ -140,6 +161,13 @@ def _collect_alerts() -> None:
         if sg.get("side"):
             _push(seen, sym, tf, "signal", sg["side"],
                   f"{'LONG' if sg['side'] == 1 else 'SHORT'} {max(sg['p_long'], sg['p_short']):.0f}%", int(ts[last]))
+    for g, cfg in PAIRS.items():
+        sp = _pair(g).get("setup")
+        if sp:
+            a, b = sp["legs"]
+            _push(seen, f"{cfg['a']}/{cfg['b']}", sp.get("mode", ""), "pair", sp["dir"],
+                  f"{'LONG' if a['side'] == 1 else 'SHORT'} {a['leg']} / {'LONG' if b['side'] == 1 else 'SHORT'} {b['leg']} · z {sp['z']:+.2f}",
+                  PAIR_STATE[g]["ts"])
     del ALERTS[:-100]
 
 
@@ -381,6 +409,7 @@ def api_state(symbol: str = "NVDA"):
             "oracle_hist": [[_et(t), i, v] for t, i, v in data.load_oracle(symbol)],
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),
             "omni": {tf: _omni_chart(symbol, tf) for tf in VIEW_TFS},
+            "pair": _pair(group) if group in PAIRS else None,
             "model": {"k_atr": prob.K_ATR, "horizon": prob.HORIZON, "report_time": _report().get("generated")},
             "live": LIVE, "alerts": ALERTS[-40:], "settings": SETTINGS, "meta": META,
             "session_open": data.session_open()}

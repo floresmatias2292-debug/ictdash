@@ -334,7 +334,63 @@ function renderPanel() {
     <table style="margin-top:6px"><tr><th>Predicted</th><th>n</th><th>Avg pred</th><th>Actual up</th></tr>${sk.calibration.map((b) => `<tr><td>${b.bin}</td><td>${b.n}</td><td>${(b.pred * 100).toFixed(0)}%</td><td>${(b.actual * 100).toFixed(0)}%</td></tr>`).join('')}</table>
     <div class="note">Large chart's timeframe. Regenerate with research/prob_validate.py.</div>` : '<div class="muted">No validation report.</div>';
   renderOracle();
+  renderPair();
   renderAlerts(d.alerts);
+}
+// ── delta-neutral oil pair (Omni USOIL-SWAP / UKOIL-SWAP) ─────────────────
+function pairStats(r) {
+  const o = r?.oos; if (!o || !o.n) return '—';
+  return `${o.n} trades · hit ${o.hit.toFixed(0)}% · ${sgn(o.mean_pct)}%/trade${o.ci_pct ? ` (95% ${sgn(o.ci_pct[0])}…${sgn(o.ci_pct[1])})` : ''}`;
+}
+function zSpark(hist, zin) {
+  if (!hist || hist.length < 2) return '';
+  const W = 300, H = 64, n = hist.length, y = (z) => H / 2 - Math.max(-4, Math.min(4, z)) / 4 * (H / 2 - 2);
+  const pts = hist.map(([, z], i) => `${(i / (n - 1) * W).toFixed(1)},${y(z).toFixed(1)}`).join(' ');
+  return `<svg class="zline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="z-score history">
+    <line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="${css('--line')}"/>
+    <line x1="0" x2="${W}" y1="${y(zin)}" y2="${y(zin)}" stroke="${css('--muted')}" stroke-dasharray="3 3"/>
+    <line x1="0" x2="${W}" y1="${y(-zin)}" y2="${y(-zin)}" stroke="${css('--muted')}" stroke-dasharray="3 3"/>
+    <polyline points="${pts}" fill="none" stroke="${css('--accent')}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
+    <div class="zscale"><span>${fmtTime(hist[0][0])}</span><span>last ${n} × ${S.data.pair.snap.params.tf}</span><span>${fmtTime(hist[n - 1][0])}</span></div>`;
+}
+function renderPair() {
+  const wrap = $('#pairWrap'), pr = S.data?.pair;
+  if (!pr) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  const sn = pr.snap, A = pr.a, B = pr.b;
+  const ma = S.live[A]?.mark ?? pr.marks[A], mb = S.live[B]?.mark ?? pr.marks[B];
+  if (!sn) { $('#pairBlock').innerHTML = '<div class="muted">Not enough CL / BZ history yet.</div>'; return; }
+  const p = sn.params, z = pr.z;
+  const pos = (v) => Math.max(0, Math.min(100, (v + 4) / 8 * 100));
+  const rich = z >= 0 ? `${A} rich vs ${B}` : `${A} cheap vs ${B}`;
+  const modeTxt = pr.mode === 'trend' ? 'Follow the stretch' : 'Fade back to the mean';
+  const tag = pr.validated ? '<span class="skill ok">validated</span>' : '<span class="skill none">not validated</span>';
+  const sp = pr.setup;
+  const legs = sp ? `<div class="sig ${sp.legs[0].side === 1 ? 'bull' : 'bear'}">${sp.legs.map((l) => `${l.side === 1 ? 'LONG' : 'SHORT'} ${l.leg}`).join(' / ')}</div>
+      <table class="legs"><tr><th>Leg</th><th>Omni mark</th><th>Notional</th></tr>${sp.legs.map((l) => `<tr><td class="${l.side === 1 ? 'bull' : 'bear'}">${l.side === 1 ? 'Long' : 'Short'} ${l.ticker}</td><td>${fmt(l.mark, 3)}</td><td>${fmt(l.notional)} USDC</td></tr>`).join('')}</table>
+      <div class="kv"><span>Leverage · margin</span><span>x${sp.lev} · ${fmt(sp.margin)} USDC</span>
+      <span>Stop (z back to ${sgn(sp.stop_z, 1)})</span><span class="bear">−${fmt(sp.risk_usdc)} USDC (${S.data.settings.risk_pct}%)</span>
+      <span>Target (z ${sgn(sp.target_z, 1)})</span><span class="bull">+${fmt(sp.target_usdc)} USDC</span>
+      <span>Costs (both legs, round trip)</span><span>${fmt(sp.cost_usdc)} USDC</span>
+      <span>Funding carry</span><span class="${sp.carry_usdc_day >= 0 ? 'bull' : 'bear'}">${sgn(sp.carry_usdc_day)} USDC / day</span></div>
+      <div class="note">${sp.oil_delta_note} Mode: ${modeTxt.toLowerCase()} (time stop ${p.max_hold} bars).</div>`
+    : `<div class="muted">No setup: |z| ${Math.abs(z).toFixed(2)} &lt; ${p.z_in}. A trade appears when the spread stretches past ±${p.z_in}.</div>`;
+  const c1 = pr.carry_per_1k || {};
+  $('#pairBlock').innerHTML = `
+    <div class="kv"><span>${pr.omni[A]}</span><span>${fmt(ma, 3)}</span><span>${pr.omni[B]}</span><span>${fmt(mb, 3)}</span>
+      <span>Brent − WTI</span><span>${ma && mb ? fmt(mb - ma, 3) : '—'}</span>
+      <span>Hedge β · correlation</span><span>${fmt(sn.beta)} · ${fmt(sn.corr)}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><span class="zbig">z ${sgn(z)}</span><span class="muted">${rich}${sn.z_live == null ? ' · last closed bar' : ' · live'}</span></div>
+    <div class="zmeter" title="z-score of the hedged spread log(WTI) − β·log(Brent) vs its ${p.window}-bar mean (${p.tf})"><span class="zband" style="left:${pos(-p.z_in)}%;width:${pos(p.z_in) - pos(-p.z_in)}%"></span><i style="left:${pos(z)}%"></i></div>
+    <div class="zscale"><span>−4</span><span>−${p.z_in}</span><span>0</span><span>+${p.z_in}</span><span>+4</span></div>
+    ${zSpark(sn.z_hist, p.z_in)}
+    <div style="margin-top:8px">${legs}</div>
+    <div class="kv" style="margin-top:6px"><span>Carry long ${A} / short ${B}</span><span class="${c1['1'] >= 0 ? 'bull' : 'bear'}">${sgn(c1['1'])} USDC/day per 1k</span>
+      <span>Carry long ${B} / short ${A}</span><span class="${c1['-1'] >= 0 ? 'bull' : 'bear'}">${sgn(c1['-1'])} USDC/day per 1k</span></div>
+    <details style="margin-top:8px"><summary class="ptitle">Out-of-sample test ${tag}</summary>
+      <div class="kv" style="margin-top:6px"><span>Follow the stretch</span><span>${pairStats(pr.reports.trend)}</span>
+      <span>Fade to the mean</span><span>${pairStats(pr.reports.revert)}</span></div>
+      <div class="note">Walk-forward since ${pr.reports.trend?.oos_from ? fmtTime(pr.reports.trend.oos_from) : '—'}: settings chosen only on earlier data, net of fees, slippage and spread on both legs. Fading the spread lost money; following it is positive on average but its 95% range still includes zero, so neither is a proven edge. Regenerate with research/pair_validate.py.</div></details>`;
 }
 function lastPrice() {
   const c = S.data?.charts['5m'];
@@ -418,7 +474,7 @@ function connect() {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type === 'live') {
-      S.live = m.live; S.sessionOpen = m.session_open; tickLive();
+      S.live = m.live; S.sessionOpen = m.session_open; tickLive(); renderPair();
     } else if (m.type === 'oracle') {
       if (!S.data) return;
       const o = m.oracle[S.sym]; if (!o) return;

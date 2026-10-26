@@ -14,6 +14,10 @@ SYMBOLS = {
     "NVDA":  {"source": "binance",     "ticker": "NVDAUSDT",   "omni": "NVDA-PERP",  "max_lev": 20, "group": "semis", "kind": "perp", "spread_bps": 5.0},
     "SOXL":  {"source": "binance",     "ticker": "SOXLUSDT",   "omni": "SOXL-PERP",  "max_lev": 15, "group": "semis", "kind": "perp", "spread_bps": 5.0},
     "US100": {"source": "hyperliquid", "ticker": "xyz:XYZ100", "omni": "US100-SWAP", "max_lev": 20, "group": "macro", "kind": "swap", "spread_bps": 2.0},
+    # Oil: Binance TradFi perps (WTI = CL, Brent = BZ) for direction; Omni CL-PERP / BZ-PERP for the live mark.
+    # Omni does not publish a leverage cap for these; 20 assumed (Hyperliquid xyz:CL / xyz:BRENTOIL allow 20).
+    "CL":    {"source": "binance",     "ticker": "CLUSDT",     "omni": "CL-PERP",    "max_lev": 20, "group": "oil",   "kind": "perp", "spread_bps": 5.0},
+    "BZ":    {"source": "binance",     "ticker": "BZUSDT",     "omni": "BZ-PERP",    "max_lev": 20, "group": "oil",   "kind": "perp", "spread_bps": 5.0},
 }
 SOURCE_LABEL = {"binance": "Binance", "hyperliquid": "Hyperliquid"}
 
@@ -21,17 +25,28 @@ SOURCE_LABEL = {"binance": "Binance", "hyperliquid": "Hyperliquid"}
 # index (oracle) price. Consensus = median index across venues whose ticker matches these base names.
 COINGECKO_DERIVATIVES = "https://api.coingecko.com/api/v3/derivatives"
 ORACLE_ALIASES = {"NVDA": ["NVDA"], "AMD": ["AMD"], "SOXL": ["SOXL"],
-                  "US100": ["XYZ100", "US100", "NAS100", "NDX100", "USTECH100"]}
+                  "US100": ["XYZ100", "US100", "NAS100", "NDX100", "USTECH100"],
+                  "CL": ["CL", "WTI", "USOIL"], "BZ": ["BZ", "BRENT", "BRENTOIL", "UKOIL"]}
 ORACLE_EVERY_S = 120          # the CoinGecko payload is ~9 MB, so not more often than every 2 minutes
 # TradingView embeddable widget symbols (reference view only — TradingView has no data API).
 TRADINGVIEW_SYMBOL = {"NVDA": "BINANCE:NVDAUSDT.P", "AMD": "BINANCE:AMDUSDT.P", "SOXL": "BINANCE:SOXLUSDT.P",
-                      "US100": "PEPPERSTONE:NAS100"}
+                      "US100": "PEPPERSTONE:NAS100", "CL": "TVC:USOIL", "BZ": "TVC:UKOIL"}
 
 GROUPS = {
     "semis": {"label": "Semis · Binance", "symbols": ["AMD", "NVDA", "SOXL"], "pair": ("AMD", "NVDA"), "hedge": "SOXL",
               "sector": ["AMD", "NVDA", "SOXL"], "fee_key": "fee_pct"},
     "macro": {"label": "Index · Hyperliquid", "symbols": ["US100"], "pair": ("US100", "US100"), "hedge": "US100",
               "sector": ["US100"], "fee_key": "swap_fee_pct"},
+    "oil":   {"label": "Oil · Binance", "symbols": ["CL", "BZ"], "pair": ("CL", "BZ"), "hedge": "BZ",
+              "sector": ["CL", "BZ"], "fee_key": "fee_pct"},
+}
+
+# Delta-neutral pair on Omni swaps. The swaps have no free candle history, so the spread statistics come
+# from the Binance perps on the same underlying ("proxy"); entries are priced at the live Omni marks.
+PAIRS = {
+    "oil": {"label": "WTI / Brent · Omni swaps", "a": "USOIL", "b": "UKOIL",
+            "omni": {"USOIL": "USOIL-SWAP", "UKOIL": "UKOIL-SWAP"}, "proxy": {"USOIL": "CL", "UKOIL": "BZ"},
+            "fee_key": "swap_fee_pct", "spread_bps": 0.4},
 }
 
 TIMEFRAMES = ["5m", "15m", "1h", "4h"]

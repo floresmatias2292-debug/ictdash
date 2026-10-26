@@ -19,7 +19,7 @@ import re
 import statistics
 
 from .config import (BINANCE_FAPI, COINGECKO_DERIVATIVES, COMPUTE_BARS, DB_PATH, HYPERLIQUID_INFO, OMNI_STATS_URL,
-                     ORACLE_ALIASES, SYMBOLS, TF_MINUTES, TIMEFRAMES)
+                     ORACLE_ALIASES, PAIRS, SYMBOLS, TF_MINUTES, TIMEFRAMES)
 
 log = logging.getLogger("data")
 ET = ZoneInfo("America/New_York")
@@ -192,14 +192,18 @@ async def fetch_omni(client: httpx.AsyncClient) -> dict:
     r.raise_for_status()
     listings = {x["ticker"]: x for x in r.json().get("listings", [])}
     out = {}
-    for sym, meta in SYMBOLS.items():
-        x = listings.get(meta["omni"])
+    wanted = {sym: (meta["omni"], meta["kind"], meta["spread_bps"]) for sym, meta in SYMBOLS.items()}
+    for pc in PAIRS.values():                       # pair legs that are only traded on Omni (e.g. USOIL-SWAP)
+        for leg, ticker in pc["omni"].items():
+            wanted[leg] = (ticker, "swap", pc["spread_bps"])
+    for sym, (ticker, kind, spread) in wanted.items():
+        x = listings.get(ticker)
         if not x:
             continue
         f = (x.get("funding") or {}).get("last") or {}
-        out[sym] = {"ticker": meta["omni"], "mark": float(x["mark_price"]),
-                    "spread_bps": float(x.get("base_spread_bps") or meta["spread_bps"]),
-                    "spread_assumed": not x.get("base_spread_bps"), "kind": meta["kind"],
+        out[sym] = {"ticker": ticker, "mark": float(x["mark_price"]),
+                    "spread_bps": float(x.get("base_spread_bps") or spread),
+                    "spread_assumed": not x.get("base_spread_bps"), "kind": kind,
                     "funding_annual_long": _f(f.get("annualized_long_rate") or f.get("annualized_rate")),
                     "funding_annual_short": _f(f.get("annualized_short_rate") or f.get("annualized_rate"))}
     return out

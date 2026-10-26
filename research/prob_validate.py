@@ -1,6 +1,6 @@
 """Out-of-sample validation of the long/short probability model (backend/prob.py).
 Writes research/prob_report.json and prints a summary.
-Run: .venv/bin/python -W ignore research/prob_validate.py
+Run: .venv/bin/python -W ignore research/prob_validate.py [group ...]
 """
 from __future__ import annotations
 
@@ -50,8 +50,13 @@ def dataset(group: str, tf: str) -> pd.DataFrame:
 
 
 def main():
-    out = {"generated": int(time.time()), "k_atr": prob.K_ATR, "horizon": prob.HORIZON, "groups": {}}
-    for g in GROUPS:
+    """Optional args: group names to (re)validate; the other groups keep their earlier results."""
+    only = sys.argv[1:] or list(GROUPS)
+    path = HERE / "prob_report.json"
+    old = json.loads(path.read_text()) if path.exists() and sys.argv[1:] else {}
+    out = {"generated": int(time.time()), "k_atr": prob.K_ATR, "horizon": prob.HORIZON,
+           "groups": {g: v for g, v in old.get("groups", {}).items() if g in GROUPS and g not in only}}
+    for g in only:
         out["groups"][g] = {}
         for tf in ("5m", "15m", "1h"):
             df = dataset(g, tf)

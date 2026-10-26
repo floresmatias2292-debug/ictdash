@@ -117,3 +117,14 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .buybar i { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(8,153,129,.75); }
 .tvbox { position: absolute; inset: 0; z-index: 6; background: var(--pane); }
 .tvbox.hidden { display: none; }
+
+/* oil pair */
+.pblock.hidden { display: none; }
+.zmeter { position: relative; height: 10px; border-radius: 5px; background: linear-gradient(90deg, rgba(242,54,69,.25), var(--chip) 30%, var(--chip) 70%, rgba(8,153,129,.25)); margin: 6px 0 2px; }
+.zmeter .zband { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--muted); border-right: 1px dashed var(--muted); }
+.zmeter i { position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px; border-radius: 2px; background: var(--text); }
+.zscale { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.zline { width: 100%; height: 64px; display: block; margin-top: 6px; }
+.zbig { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.legs { margin: 6px 0; }
+.legs td:first-child { font-weight: 700; }

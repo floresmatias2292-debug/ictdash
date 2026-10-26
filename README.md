@@ -22,6 +22,30 @@ Long/short probability (`backend/prob.py`): P(price hits +1×ATR before −1×AT
 state carries no directional edge, so the model is heavily regularized and keeps probabilities near 50%. The dashboard
 shows that skill next to every probability; a signal appears only if a probability crosses the threshold (60%).
 
+## Oil strategy (WTI / Brent)
+
+- **Direction (CL, BZ):** Binance TradFi perps CLUSDT (WTI) and BZUSDT (Brent), history since 1 Apr 2026,
+  with the same FVG-ICT charts and long/short probability as the other groups. Omni CL-PERP / BZ-PERP give
+  the live mark.
+- **Delta-neutral pair (USOIL-SWAP / UKOIL-SWAP on Omni):** long one benchmark and short the other, with the
+  Brent leg sized at the hedge ratio β, so a move in the oil price cancels out. A setup appears when the
+  hedged spread `log(WTI) − β·log(Brent)` is more than 2 standard deviations from its 192-hour mean. It is
+  sized so a stop-out loses `risk_pct` of capital. The panel also shows the daily funding carry of each
+  orientation at today's Omni rates. The spread statistics come from the Binance perps (no free swap history).
+- **Validation (walk-forward, out of sample, net of costs):**
+  - CL/BZ probability: AUC 0.52 / 0.51 / 0.49 on 5m / 15m / 1h, i.e. no edge.
+  - Pair, fading the spread: 59 trades, 41% hit, −0.15% per trade (loses).
+  - Pair, following the stretch: 28 trades, +0.12% per trade, but its 95% range (−0.29%…+0.63%) includes
+    zero, so neither is a proven edge.
+
+  Rerun with:
+
+  ```bash
+  .venv/bin/python -W ignore research/pair_validate.py revert
+  .venv/bin/python -W ignore research/pair_validate.py trend
+  .venv/bin/python -W ignore research/prob_validate.py oil
+  ```
+
 ## Run
 
 Permanent (systemd user service, restarts on failure, starts at login):
