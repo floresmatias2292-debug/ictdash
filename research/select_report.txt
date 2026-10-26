@@ -1,0 +1,38 @@
+
+## macro 1h  (train 2023-11-29→2025-10-06, test →2026-10-22)
+baseline  train n=1081 win=18.0% netR=-0.391 | test n=721 win=18.6% netR=-0.367
+1 of 325 candidate filters beat the baseline on train
+  cost_ok & no_strong          train n=  72 win= 27.8% netR=+0.037 | TEST n=  42 win= 21.4% netR=+0.309 CI[-0.20,+0.85]  DXI:+6.36(n1) US100:+0.52(n33) US30:-0.24(n8)
+
+## macro 4h  (train 2023-12-07→2025-10-07, test →2026-10-21)
+baseline  train n=508 win=23.2% netR=-0.213 | test n=339 win=20.4% netR=-0.331
+27 of 325 candidate filters beat the baseline on train
+  score>=3 & small_fvg         train n=  40 win= 35.0% netR=+0.200 | TEST n=  41 win= 29.3% netR=+0.043 CI[-0.45,+0.53]  DXI:+0.77(n16) US100:-0.80(n10) US30:-0.15(n15)
+  cost_ok & mss                train n=  78 win= 28.2% netR=+0.198 | TEST n=  50 win= 26.0% netR=+0.005 CI[-0.35,+0.38]  DXI:+0.52(n13) US100:-0.03(n14) US30:-0.27(n23)
+  pd & mss                     train n=  43 win= 23.3% netR=+0.135 | TEST n=  36 win= 13.9% netR=-0.050 CI[-0.54,+0.43]  DXI:+0.53(n17) US100:-0.13(n7) US30:-0.77(n12)
+
+## macro 5m  (train 2026-07-31→2026-09-25, test →2026-10-23)
+baseline  train n=681 win=24.7% netR=-1.529 | test n=454 win=20.5% netR=-1.418
+1 of 325 candidate filters beat the baseline on train
+  cost_ok & no_sweep           train n=  39 win=  0.0% netR=+0.001 | TEST n=  32 win=  3.1% netR=+0.058 CI[-0.19,+0.36]  DXI:-0.27(n10) US100:+1.17(n19) US30:+0.39(n3)
+
+## semis 1h  (train 2023-11-29→2025-09-25, test →2026-10-21)
+baseline  train n=936 win=19.9% netR=-0.190 | test n=622 win=18.8% netR=-0.035
+13 of 325 candidate filters beat the baseline on train
+  align_own & sweep            train n=  65 win= 33.8% netR=+0.226 | TEST n=  42 win= 16.7% netR=+0.032 CI[-0.38,+0.43]  AMD:-0.29(n20) NVDA:+0.40(n10) SOXL:+0.25(n12)
+  align_1h & sweep             train n=  65 win= 33.8% netR=+0.226 | TEST n=  42 win= 16.7% netR=+0.032 CI[-0.38,+0.43]  AMD:-0.29(n20) NVDA:+0.40(n10) SOXL:+0.25(n12)
+  late & cost_ok               train n=  97 win= 27.8% netR=+0.120 | TEST n=  62 win= 25.8% netR=+0.781 CI[+0.32,+1.24]  AMD:+2.36(n18) NVDA:+0.89(n9) SOXL:+1.31(n35)
+
+## semis 4h  (train 2023-12-05→2025-10-08, test →2026-10-21)
+baseline  train n=481 win=25.6% netR=-0.009 | test n=319 win=26.3% netR=+0.065
+123 of 325 candidate filters beat the baseline on train
+  mid & long                   train n=  46 win= 32.6% netR=+0.272 | TEST n=  39 win= 30.8% netR=+0.047 CI[-0.45,+0.57]  AMD:+0.36(n13) NVDA:+0.37(n11) SOXL:-0.29(n15)
+  align_own & mid              train n=  56 win= 28.6% netR=+0.226 | TEST n=  40 win= 37.5% netR=+0.166 CI[-0.35,+0.66]  AMD:+0.85(n12) NVDA:+0.14(n13) SOXL:-0.19(n15)
+  align_4h & mid               train n=  56 win= 28.6% netR=+0.226 | TEST n=  40 win= 37.5% netR=+0.166 CI[-0.35,+0.66]  AMD:+0.85(n12) NVDA:+0.14(n13) SOXL:-0.19(n15)
+
+## semis 5m  (train 2026-07-31→2026-09-24, test →2026-10-23)
+baseline  train n=509 win=26.7% netR=-0.682 | test n=339 win=19.5% netR=-0.791
+16 of 325 candidate filters beat the baseline on train
+  cost_ok & pd                 train n=  32 win= 21.9% netR=+0.348 | TEST n=  36 win=  2.8% netR=-0.094 CI[-0.46,+0.27]  AMD:+0.10(n8) NVDA:+2.95(n6) SOXL:-0.66(n22)
+  align_1h & cost_ok           train n=  41 win= 14.6% netR=+0.346 | TEST n=  47 win=  6.4% netR=+0.039 CI[-0.28,+0.37]  AMD:-0.07(n11) NVDA:+2.93(n9) SOXL:+0.13(n27)
+  score<=2 & cost_ok           train n=  33 win= 18.2% netR=+0.324 | TEST n=  31 win=  9.7% netR=-0.105 CI[-0.53,+0.36]  AMD:-0.41(n5) NVDA:+6.51(n3) SOXL:+0.09(n23)

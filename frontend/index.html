@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FVG-ICT Charts</title>
+<link rel="stylesheet" href="/static/style.css?v=15">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<header class="toolbar">
+  <div class="brand">FVG<span>·</span>ICT</div>
+  <div class="sep"></div>
+  <nav id="symbols" class="symbols"></nav>
+  <div class="sep"></div>
+  <div class="group" id="layouts" title="Layout">
+    <button data-l="focus" title="1 large + 2 small">◧</button>
+    <button data-l="cols" title="3 columns">▥</button>
+    <button data-l="rows" title="3 rows">☰</button>
+    <button data-l="single" title="Single chart">▢</button>
+  </div>
+  <div class="group" id="focusTf" title="Large chart"></div>
+  <div class="sep"></div>
+  <div class="group" id="source" title="Data source">
+    <button data-s="perp" title="Binance / Hyperliquid perp candles, 24/7">Futures</button><button data-s="omni" title="Candles built from the Omni mark">Omni</button><button data-s="tv" title="TradingView's free embed widget (reference view)">TradingView</button>
+  </div>
+  <div class="group" id="detail" title="Drawing detail">
+    <button data-d="clean">Clean</button><button data-d="full">Full</button>
+  </div>
+  <button class="tbtn" id="layersBtn" title="Layers">Layers ▾</button>
+  <div class="spacer"></div>
+  <div id="status" class="status"><span class="dot"></span><span class="txt">connecting…</span></div>
+  <button class="tbtn" id="tzBtn" title="Chart time zone: your local legal time or New York">🕒</button>
+  <button class="tbtn" id="alertsBtn" title="Browser notifications + sound">🔔</button>
+  <button class="tbtn" id="themeBtn" title="Light / dark">◐</button>
+  <button class="tbtn" id="settingsBtn" title="Settings">⚙</button>
+  <button class="tbtn" id="panelBtn" title="Show / hide side panel">⇥</button>
+</header>
+<div id="layers" class="popover hidden"></div>
+
+<main id="main">
+  <section id="grid" class="grid layout-focus"></section>
+  <aside id="panel">
+    <div class="pblock" id="quoteBlock"></div>
+    <div class="pblock"><div class="ptitle">Oracle check <span class="hint" title="Runs in parallel with the chart feed: the venue's own index price and a CoinGecko consensus across all perp venues.">?</span></div><div id="oracleBlock"></div></div>
+    <div class="pblock"><div class="ptitle">Long / Short probability <span class="hint" title="Probability that price reaches +1×ATR before −1×ATR (long) from the next bar, within the horizon. 50% = no edge.">?</span></div><div id="probBlock"></div></div>
+    <div class="pblock"><div class="ptitle">Signal</div><div id="signalBlock"></div></div>
+    <div class="pblock"><div class="ptitle">Volume</div><div id="volBlock"></div></div>
+    <div class="pblock"><div class="ptitle">FVG-ICT table</div><div id="tableBlock"></div></div>
+    <div class="pblock"><details id="validDetails"><summary class="ptitle">Model validation</summary><div id="validBlock"></div></details></div>
+    <div class="pblock"><div class="ptitle">Alerts</div><div id="alertBlock"></div></div>
+    <p class="foot">Pine port: FVG ICT — Confluencias (Sweep · MSS · OB · P/D · OR). Charts: Binance USD-M futures (AMD, NVDA, SOXL) and Hyperliquid xyz:XYZ100 (US100), 24/7. Omni: live mark only. Not financial advice.</p>
+  </aside>
+</main>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h3>Settings</h3>
+    <div class="sgrid" id="settingsGrid"></div>
+    <div class="actions"><button value="cancel" class="tbtn">Cancel</button><button id="saveSettings" value="save" class="tbtn primary">Save</button></div>
+  </form>
+</dialog>
+
+<script src="/static/overlay.js?v=15"></script>
+<script src="/static/app.js?v=15"></script>
+</body>
+</html>

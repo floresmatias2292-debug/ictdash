@@ -1,0 +1,16 @@
+[Unit]
+Description=FVG-ICT dashboard (Binance / Hyperliquid 24/7 charts) on http://127.0.0.1:8050
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Replace both paths if you move the project folder again.
+WorkingDirectory=/home/matias/dashboard/ictdash
+ExecStart=/home/matias/dashboard/ictdash/run.sh
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
