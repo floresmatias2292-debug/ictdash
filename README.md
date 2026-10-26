@@ -24,19 +24,28 @@ shows that skill next to every probability; a signal appears only if a probabili
 
 ## Run
 
-Permanent (systemd user service, restarts on failure, starts at login):
+Needs **Python 3.12+** (numpy 2.5 / pandas 3.1). On any computer (Linux, macOS, Windows):
 
 ```bash
-cp deploy/ictdash.service ~/.config/systemd/user/ && systemctl --user daemon-reload
-systemctl --user enable --now ictdash.service     # http://localhost:8050
+git clone https://github.com/floresmatias2292-debug/ictdash.git && cd ictdash
+./run.sh              # Linux/macOS   (Windows: double-click run.bat, or  py start.py)
+```
+
+`start.py` creates `.venv` on first run, rebuilds it if it was copied from another computer, reinstalls
+dependencies when `requirements.txt` changes, then serves http://localhost:8050. Do not copy `.venv` or `data/`
+between computers; `data/market.sqlite` is backfilled from Binance / Hyperliquid on the first start.
+
+Permanent on Linux (systemd user service for whatever folder the project is in):
+
+```bash
+deploy/install-service.sh                          # http://localhost:8050
 systemctl --user status ictdash.service           # state
 journalctl --user -u ictdash.service -f           # live logs
 systemctl --user restart ictdash.service          # after code changes
 ```
 
-Manual: `./run.sh`. The first start backfills Binance (from each listing) and Hyperliquid (newest 5000 candles)
-into `data/market.sqlite`; later starts fetch only the missing bars. Python deps: pandas numpy fastapi uvicorn httpx
-in `.venv` (recreate it if the folder is moved).
+If it fails: `python3 --version` must be 3.12+; on Ubuntu/Debian `sudo apt install python3.12 python3.12-venv`;
+port in use → `PORT=8060 ./run.sh`.
 
 ## Layout
 
