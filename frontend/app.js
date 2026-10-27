@@ -341,7 +341,41 @@ function renderPanel() {
     <div class="note">Large chart's timeframe. Regenerate with research/prob_validate.py.</div>` : '<div class="muted">No validation report.</div>';
   renderOracle();
   renderSocial();
+  renderLoris();
   renderAlerts(d.alerts);
+}
+// ── Loris Tools funding ────────────────────────────────────────────────────
+function lorisSpark(hist) {
+  const lines = Object.entries(hist || {}).filter(([, pts]) => pts.length > 1);
+  if (!lines.length) return '';
+  const all = lines.flatMap(([, p]) => p), t0 = Math.min(...all.map((p) => p[0])), t1 = Math.max(...all.map((p) => p[0]));
+  let lo = Math.min(0, ...all.map((p) => p[1])), hi = Math.max(0, ...all.map((p) => p[1])); if (hi === lo) hi = lo + 1;
+  const W = 300, H = 60, x = (t) => (t - t0) / Math.max(1, t1 - t0) * W, y = (v) => H - (v - lo) / (hi - lo) * H;
+  const color = { median: 'var(--muted)', variational: 'var(--accent)', omni: 'var(--accent)', binance: '#f0b90b' };
+  return `<svg class="lspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" class="zero"/>${lines.map(([ex, p]) => `<polyline fill="none" stroke="${color[ex] || '#9c27b0'}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${p.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"><title>${ex}</title></polyline>`).join('')}</svg>
+    <div class="note">Last ${Math.round((t1 - t0) / 3600)} h, bps/8 h: ${lines.map(([ex]) => `<span style="color:${color[ex] || '#9c27b0'}">■</span> ${ex}`).join(' ')}</div>`;
+}
+function renderLoris() {
+  const d = S.data, L = d?.loris, box = $('#lorisBlock'), err = d?.meta?.loris_error;
+  if (!box) return;
+  const head = err ? `<div class="warn">${esc(err)}</div>` : '';
+  if (!L || !L.venues.length) {
+    box.innerHTML = head + (d.loris_key ? '<div class="muted">Waiting for the first Loris read…</div>'
+      : `<div class="muted">No API key.</div><div class="note">The Loris free plan only returns BTC and ETH. For ${S.sym}, get a paid key at loris.tools/pricing and add a line <code>LORIS_API_KEY=your_key</code> to the <b>.env</b> file in the project folder, then restart.</div>`);
+    return;
+  }
+  const bp = (x) => `${x >= 0 ? '+' : ''}${x.toFixed(2)}`;
+  const rows = L.venues.slice().reverse().map((v) => `<tr class="${v.label ? 'home' : ''}"><td>${esc(v.exchange)}${v.label && v.label.toLowerCase() !== v.exchange.toLowerCase() ? ` <span class="chip">${esc(v.label)}</span>` : ''}</td><td class="${v.bps_8h > 0 ? 'bear' : v.bps_8h < 0 ? 'bull' : ''}">${bp(v.bps_8h)}</td><td>${sgn(v.apr, 1)}%</td><td class="muted">${v.interval_h ? v.interval_h + 'h' : '—'}</td></tr>`).join('');
+  const o = L.omni;
+  box.innerHTML = `${head}<div class="kv">
+      <span>Omni (Variational)</span><span>${o ? `${bp(o.bps_8h)} bps/8h · ${sgn(o.apr, 1)}% APR` : 'not listed'}</span>
+      <span>Median, ${L.venues.length} venues</span><span>${bp(L.median_bps)} bps/8h</span>
+      <span>Cheapest to be long</span><span class="bull">${esc(L.best_long)}</span>
+      <span>Best to be short</span><span class="bear">${esc(L.best_short)}</span>
+      <span>Spread (short − long)</span><span>${L.spread_bps.toFixed(2)} bps/8h · ${L.spread_apr.toFixed(1)}% APR</span></div>
+    ${lorisSpark(d.loris_hist)}
+    <details><summary class="note">All venues</summary><table><tr><th>Venue</th><th>bps/8h</th><th>APR</th><th>Every</th></tr>${rows}</table></details>
+    <div class="note">Positive = longs pay shorts. Updated ${fmtTime(L.ts)} from loris.tools. Spread is before fees and price moves between venues.</div>`;
 }
 // ── X (Twitter) ────────────────────────────────────────────────────────────
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -462,6 +496,9 @@ function connect() {
         for (const tf of TFS) renderOracleLine(S.panes[tf]);
       }
       renderOracle();
+    } else if (m.type === 'loris') {
+      if (!S.data) return;
+      S.data.loris = m.loris[S.sym] || null; S.data.meta = m.meta; renderLoris();
     } else if (m.type === 'social') {
       if (!S.data || !m.social[S.sym]) return;
       S.data.social = m.social[S.sym]; S.data.meta = m.meta; renderSocial();

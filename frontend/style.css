@@ -131,3 +131,8 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .tweet .vb { color: var(--accent); }
 .chip { background: var(--chip); color: var(--muted); border-radius: 3px; padding: 0 4px; font-size: 10px; }
 code { font-size: 11px; background: var(--chip); padding: 0 3px; border-radius: 3px; overflow-wrap: anywhere; }
+
+/* Loris funding */
+.lspark { width: 100%; height: 60px; margin-top: 8px; display: block; }
+.lspark .zero { stroke: var(--line); stroke-dasharray: 3 3; }
+tr.home td { font-weight: 600; }

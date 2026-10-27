@@ -47,6 +47,16 @@ systemctl --user restart ictdash.service          # after code changes
 If it fails: `python3 --version` must be 3.12+; on Ubuntu/Debian `sudo apt install python3.12 python3.12-venv`;
 port in use → `PORT=8060 ./run.sh`.
 
+## Funding by venue (Loris Tools)
+
+Side panel "Funding · Loris Tools": the live funding rate of every venue listing the perp (Omni/Variational, Binance,
+Hyperliquid xyz, Lighter, Ostium …) from [loris.tools](https://loris.tools) `GET /funding`, 8 h-normalized bps and APR,
+the cross-venue median, the cheapest venue to be long / best to be short and their spread, plus a 72 h history line
+built from our own reads (table `loris_funding`). Read every `LORIS_POLL_SEC` (60 s).
+
+Setup: `LORIS_API_KEY=...` in `.env`, restart. The free plan returns BTC and ETH only, so NVDA / AMD need a paid plan.
+Check the key and the symbol / venue names: `.venv/bin/python -m backend.loris` (raw reply in `data/loris_last.json`).
+
 ## X (Twitter) feed for AMD / NVDA perps
 
 Side panel "X · Twitter": tweets about the perp ($AMD / $NVDA cashtags, Binance AMDUSDT / NVDAUSDT, Omni AMD-PERP /
@@ -74,6 +84,7 @@ Reads every `X_POLL_SEC` (300 s) and stops at `X_DAILY_CAP` tweets per UTC day (
 | `backend/ict.py` | Bar-by-bar port of the Pine script (FVG, mitigation, pivots, sweeps, BOS/CHoCH, OB, P/D, OR, score) |
 | `backend/stats.py` | Setup simulation (limit at FVG edge, stop at far edge, target in R), walk-forward probability, backtest |
 | `backend/portfolio.py` | Strength score, long/short pair, SOXL beta hedge, margin split, safe leverage, liquidation prices |
+| `backend/loris.py` | Loris Tools funding rates per venue, median, long/short venue spread, own history |
 | `backend/social.py` | X (Twitter) reads (twitterapi.io or X API), sentiment, buzz, daily cost cap |
 | `backend/server.py` | FastAPI: recalculates on every closed bar, polls Omni every 5 s, WebSocket push |
 | `frontend/` | lightweight-charts 4.2.3 UI (light theme, English), browser notifications + sound |

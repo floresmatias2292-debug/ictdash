@@ -20,7 +20,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, prob, social, stats
+from . import data, ict, loris, prob, social, stats
 from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, SETTINGS, SOURCE_LABEL, SYMBOLS,
                      TRADINGVIEW_SYMBOL)
 from .portfolio import fee_pct, max_lev
@@ -36,6 +36,7 @@ REPORT = FRONTEND_DIR.parent / "research" / "prob_report.json"
 
 STATE: dict = {}          # (symbol, tf) -> {bars, forming, res, prob}
 LIVE: dict = {}           # symbol -> Omni quote
+LORIS: dict = {}          # symbol -> funding by venue from Loris Tools
 ORACLE: dict = {}         # symbol -> {consensus (CoinGecko), venue (Binance/Hyperliquid index), last}
 ALERTS: list = []
 META = {"loading": False, "history_error": {}, "version": 0, "last_calc": None, "last_candles": None, "candle_error": None, "last_omni": None, "omni_error": None}
@@ -244,6 +245,25 @@ def _row_candle(r) -> dict:
             "buy_pct": (tb / v * 100) if (tb is not None and v) else None}
 
 
+async def loris_loop():
+    """Loris Tools funding rates for every venue, every LORIS_POLL_SEC (default 60 s)."""
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                parsed = loris.parse(await loris.fetch(client))
+                LORIS.update(parsed)
+                await asyncio.to_thread(loris.save, parsed)
+                META["last_loris"], META["loris_error"] = time.time(), None
+                if not any(d["venues"] for d in parsed.values()):
+                    META["loris_error"] = ("No NVDA/AMD funding in the Loris response: the free plan returns BTC/ETH only"
+                                           if not loris.api_key() else "None of the dashboard symbols are in the Loris response")
+                await broadcast({"type": "loris", "loris": LORIS, "meta": META})
+            except Exception as e:
+                META["loris_error"] = str(e)[:200]
+                log.warning("loris: %s", e)
+            await asyncio.sleep(loris.poll_sec())
+
+
 async def social_loop():
     """X (Twitter) tweets about the AMD / NVDA perps, every X_POLL_SEC (default 5 min), when a key is in .env."""
     async with httpx.AsyncClient() as client:
@@ -315,7 +335,7 @@ async def lifespan(app):
     _closed_changed()
     await asyncio.to_thread(recompute)
     tasks = [asyncio.create_task(omni_loop()), asyncio.create_task(candle_loop()), asyncio.create_task(oracle_loop()),
-             asyncio.create_task(social_loop())]
+             asyncio.create_task(social_loop()), asyncio.create_task(loris_loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -420,6 +440,7 @@ def api_state(symbol: str = "NVDA"):
             "charts": {tf: _chart(symbol, tf) for tf in VIEW_TFS},
             "oracle": ORACLE.get(symbol, {}),
             "social": social.summary(symbol),
+            "loris": LORIS.get(symbol), "loris_hist": loris.history(symbol), "loris_key": bool(loris.api_key()),
             "oracle_hist": [[_et(t), i, v] for t, i, v in data.load_oracle(symbol)],
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),
             "omni": {tf: _omni_chart(symbol, tf) for tf in VIEW_TFS},
