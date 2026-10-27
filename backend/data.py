@@ -81,10 +81,10 @@ def _binance(client: httpx.Client, ticker: str, tf: str, start_ms: int | None, l
             for k in r.json()]
 
 
-def _binance_backfill(client: httpx.Client, sym: str, tf: str) -> int:
-    """From the newest cached bar (or the listing) up to now, 1500 bars per request."""
+def _binance_backfill(client: httpx.Client, sym: str, tf: str, full: bool = False) -> int:
+    """From the newest cached bar (or the listing, when full) up to now, 1500 bars per request."""
     ticker = SYMBOLS[sym]["ticker"]
-    lt = last_ts(sym, tf)
+    lt = None if full else last_ts(sym, tf)
     start = (lt * 1000) if lt else 0
     total = 0
     while True:
@@ -107,9 +107,9 @@ def _hyperliquid(client: httpx.Client, coin: str, tf: str, start_ms: int, end_ms
             for c in r.json()]
 
 
-def _hyperliquid_backfill(client: httpx.Client, sym: str, tf: str) -> int:
+def _hyperliquid_backfill(client: httpx.Client, sym: str, tf: str, full: bool = False) -> int:
     """Hyperliquid serves the newest 5000 candles per interval; history before that is kept from earlier runs."""
-    lt = last_ts(sym, tf)
+    lt = None if full else last_ts(sym, tf)
     now = int(time.time() * 1000)
     rows = _hyperliquid(client, SYMBOLS[sym]["ticker"], tf, (lt * 1000) if lt else 0, now)
     _upsert(sym, tf, rows)
@@ -123,7 +123,8 @@ def refresh_history(symbol: str, full: bool = False) -> list[str]:
     with httpx.Client() as client:
         for tf in TIMEFRAMES:
             try:
-                n = (_binance_backfill if src == "binance" else _hyperliquid_backfill)(client, symbol, tf)
+                # full: ignore the newest stored bar, the live feed may already have written it
+                n = (_binance_backfill if src == "binance" else _hyperliquid_backfill)(client, symbol, tf, full)
                 if full:
                     log.info("%s %s %s: %d bars", src, symbol, tf, n)
             except Exception as e:

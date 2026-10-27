@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -21,8 +22,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import data, ict, loris, prob, social, stats
-from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, SETTINGS, SOURCE_LABEL, SYMBOLS,
-                     TRADINGVIEW_SYMBOL)
+from .config import (BINANCE_FAPI, FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, SETTINGS, SOURCE_LABEL, SYMBOLS,
+                     TRADINGVIEW_SYMBOL, use_hyperliquid_for_binance)
 from .portfolio import fee_pct, max_lev
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -311,8 +312,25 @@ def _closed_changed() -> bool:
     return changed
 
 
+def _pick_chart_source() -> None:
+    """CHART_SOURCE=auto (default) | binance | hyperliquid. Auto: Hyperliquid when Binance blocks this country."""
+    mode = os.environ.get("CHART_SOURCE", "auto").lower()
+    if mode == "auto":
+        try:
+            code = httpx.get(f"{BINANCE_FAPI}/fapi/v1/ping", timeout=10).status_code
+        except httpx.HTTPError:
+            code = None                      # offline: keep Binance, the loops retry
+        mode = "hyperliquid" if code in (403, 451) else "binance"
+        if mode == "hyperliquid":
+            log.warning("Binance futures blocked here (HTTP %s): charting AMD/NVDA/SOXL from Hyperliquid xyz", code)
+    if mode == "hyperliquid":
+        META["chart_source"] = "hyperliquid"
+        log.info("Hyperliquid charts for %s", ", ".join(use_hyperliquid_for_binance()))
+
+
 @asynccontextmanager
 async def lifespan(app):
+    _pick_chart_source()
     full = not all(data.has_history(s) for s in SYMBOLS)
     if full:
         # First run on this computer: the page opens right away and fills in when the download finishes.

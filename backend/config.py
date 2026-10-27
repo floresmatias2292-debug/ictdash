@@ -10,12 +10,25 @@ FRONTEND_DIR = ROOT / "frontend"
 # no Dow; Lighter: candles endpoint returns 403), so they are not charted.
 # omni: Variational Omni ticker for the live mark / sizing. kind: Omni funding style ("perp" | "swap").
 SYMBOLS = {
-    "AMD":   {"source": "binance",     "ticker": "AMDUSDT",    "omni": "AMD-PERP",   "max_lev": 20, "group": "semis", "kind": "perp", "spread_bps": 5.0},
-    "NVDA":  {"source": "binance",     "ticker": "NVDAUSDT",   "omni": "NVDA-PERP",  "max_lev": 20, "group": "semis", "kind": "perp", "spread_bps": 5.0},
-    "SOXL":  {"source": "binance",     "ticker": "SOXLUSDT",   "omni": "SOXL-PERP",  "max_lev": 15, "group": "semis", "kind": "perp", "spread_bps": 5.0},
+    "AMD":   {"source": "binance",     "ticker": "AMDUSDT",  "hl_ticker": "xyz:AMD",    "omni": "AMD-PERP",   "max_lev": 20, "group": "semis", "kind": "perp", "spread_bps": 5.0},
+    "NVDA":  {"source": "binance",     "ticker": "NVDAUSDT",  "hl_ticker": "xyz:NVDA",   "omni": "NVDA-PERP",  "max_lev": 20, "group": "semis", "kind": "perp", "spread_bps": 5.0},
+    "SOXL":  {"source": "binance",     "ticker": "SOXLUSDT",  "hl_ticker": "xyz:SOXL",   "omni": "SOXL-PERP",  "max_lev": 15, "group": "semis", "kind": "perp", "spread_bps": 5.0},
     "US100": {"source": "hyperliquid", "ticker": "xyz:XYZ100", "omni": "US100-SWAP", "max_lev": 20, "group": "macro", "kind": "swap", "spread_bps": 2.0},
 }
 SOURCE_LABEL = {"binance": "Binance", "hyperliquid": "Hyperliquid"}
+
+
+def use_hyperliquid_for_binance() -> list[str]:
+    """Where Binance futures are blocked (HTTP 451 / 403, e.g. US servers), chart the same perps from
+    Hyperliquid's xyz dex instead (xyz:NVDA, xyz:AMD, xyz:SOXL). Returns the symbols switched."""
+    moved = []
+    for sym, m in SYMBOLS.items():
+        if m["source"] == "binance" and m.get("hl_ticker"):
+            m.update(source="hyperliquid", ticker=m["hl_ticker"])
+            moved.append(sym)
+    for g in GROUPS.values():
+        g["label"] = g["label"].replace("Binance", "Hyperliquid")
+    return moved
 
 # Parallel price check: CoinGecko /derivatives (free, no key) lists the perps of ~20 venues with each venue's
 # index (oracle) price. Consensus = median index across venues whose ticker matches these base names.

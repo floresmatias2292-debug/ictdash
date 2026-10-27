@@ -44,6 +44,9 @@ journalctl --user -u ictdash.service -f           # live logs
 systemctl --user restart ictdash.service          # after code changes
 ```
 
+Where Binance futures are blocked (HTTP 451, e.g. US servers) the dashboard charts AMD / NVDA / SOXL from
+Hyperliquid xyz (xyz:AMD, xyz:NVDA, xyz:SOXL) automatically; force it with `CHART_SOURCE=hyperliquid` or `binance` in `.env`.
+
 If it fails: `python3 --version` must be 3.12+; on Ubuntu/Debian `sudo apt install python3.12 python3.12-venv`;
 port in use → `PORT=8060 ./run.sh`.
 
