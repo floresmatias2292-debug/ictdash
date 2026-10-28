@@ -128,3 +128,15 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .zbig { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .legs { margin: 6px 0; }
 .legs td:first-child { font-weight: 700; }
+
+/* paper trading widget (large chart only) */
+.trade { position: absolute; left: 8px; top: 64px; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px; width: 236px; }
+.pane:not(.big) .trade, .trade.off { display: none; }
+.trade button { flex: 1; display: flex; flex-direction: column; align-items: flex-start; padding: 3px 8px; border: 0; border-radius: 4px; cursor: pointer; color: #fff; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.trade button b { font-size: 11px; letter-spacing: .04em; }
+.trade button .px { font-size: 13px; font-weight: 600; }
+.trade .buy { background: #089981; } .trade .sell { background: #f23645; align-items: flex-end; }
+.trade button:hover { filter: brightness(1.08); } .trade button:active { filter: brightness(.92); }
+.trade .tcfg { width: 100%; font-size: 10px; color: var(--muted); background: var(--pane); border-radius: 3px; padding: 0 4px; opacity: .9; }
+.tbtn.xs { padding: 1px 6px; font-size: 11px; }
+td small { color: var(--muted); font-size: 10px; }

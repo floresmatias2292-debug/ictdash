@@ -12,7 +12,7 @@ const S = {
   sym: store.get('sym', 'NVDA'), layout: store.get('layout', 'focus'), focus: store.get('focus', '5m'),
   source: store.get('source', 'perp'), detail: store.get('detail', 'clean'), theme: store.get('theme', 'light'),
   show: { ...Object.fromEntries(Object.keys(LAYERS).map((k) => [k, k !== 'mitigated'])), ...store.get('layers', {}) },
-  tz: store.get('tz', 'local'), data: null, live: {}, sessionOpen: false, panes: {}, seen: null, alertsOn: false, panel: store.get('panel', true),
+  tz: store.get('tz', 'local'), data: null, live: {}, lastPx: {}, paper: null, sessionOpen: false, panes: {}, seen: null, alertsOn: false, panel: store.get('panel', true),
 };
 if (!TFS.includes(S.focus)) S.focus = '5m';
 
@@ -133,7 +133,8 @@ function makePane(tf) {
   el.className = 'pane'; el.dataset.tf = tf;
   el.innerHTML = `<div class="chart"></div><div class="legend"></div>
     <div class="pane-tools"><button class="mk" title="Make this the large chart">◎</button><button class="mx" title="Maximize (Esc to restore)">⤢</button></div>
-    <div class="pbadge"></div>`;
+    <div class="pbadge"></div>
+    <div class="trade" title="Paper trade (fictitious) at the futures price"><button class="buy" data-side="1"><b>LONG</b><span class="px">—</span></button><button class="sell" data-side="-1"><b>SHORT</b><span class="px">—</span></button><div class="tcfg"></div></div>`;
   $('#grid').appendChild(el);
   const chart = LightweightCharts.createChart($('.chart', el), chartOptions());
   const candles = chart.addCandlestickSeries({ upColor: '#089981', downColor: '#f23645', borderVisible: false, wickUpColor: '#089981', wickDownColor: '#f23645', priceLineVisible: true, priceLineWidth: 1 });
@@ -144,7 +145,8 @@ function makePane(tf) {
   const mark = candles.createPriceLine({ price: 0, color: '#2962ff', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'Omni' });
   const oracle = chart.addLineSeries({ color: '#9c27b0', lineWidth: 2, lineStyle: 1, priceLineVisible: false, lastValueVisible: true, title: 'CG', crosshairMarkerVisible: false });
   el.insertAdjacentHTML('beforeend', '<div class="tvbox hidden"></div>');
-  const p = { tf, el, chart, candles, volume, overlay, mark, oracle, fitted: false, bars: [], tvKey: null };
+  const p = { tf, el, chart, candles, volume, overlay, mark, oracle, fitted: false, bars: [], tvKey: null, plines: [] };
+  el.querySelectorAll('.trade button').forEach((b) => { b.onclick = () => paperOpen(Number(b.dataset.side)); });
   chart.subscribeCrosshairMove((param) => legend(p, param));
   $('.mx', el).onclick = () => maximize(tf);
   $('.mk', el).onclick = () => setFocus(tf);
@@ -335,14 +337,77 @@ function renderPanel() {
     <div class="note">Large chart's timeframe. Regenerate with research/prob_validate.py.</div>` : '<div class="muted">No validation report.</div>';
   renderOracle();
   renderPair();
+  renderPaper();
   renderAlerts(d.alerts);
 }
+// ── paper trading: fixed leverage and margin, at the futures price ──────────
+function paperPx(sym) { return sym === S.sym ? (lastPrice() ?? S.lastPx[sym]) : S.lastPx[sym]; }
+function paperMark(t) {
+  const px = paperPx(t.symbol) ?? t.mark?.price; if (px == null) return null;
+  const gross = t.side * (px - t.entry) / t.entry * t.notional, fees = t.fee_rate * t.notional * (1 + px / t.entry), net = gross - fees;
+  return { px, net, roe: net / t.margin * 100 };
+}
+async function paperOpen(side) {
+  if (S.source === 'tv') { setStatus(false, 'switch to Futures to paper trade'); return; }
+  const r = await fetch('/api/paper/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ symbol: S.sym, side }) });
+  const j = await r.json();
+  if (j.error) { setStatus(false, j.error); return; }
+  S.paper = j; renderPaper();
+}
+async function paperClose(id) {
+  const r = await fetch('/api/paper/close', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
+  const j = await r.json(); if (!j.error) { S.paper = j; renderPaper(); }
+}
+function paperEvent(ev) {
+  if (!ev) return;
+  if (ev.kind === 'liquidated') for (const t of ev.trades) notify({ id: `paper-liq-${t.id}`, symbol: 'Paper', tf: '', type: 'signal', text: `#${t.id} liquidated at ${fmt(t.exit)} (${sgn(t.pnl)} USDC)` });
+}
+function renderPaperLines() {
+  // entry + liquidation lines of this symbol's open paper trades on every futures chart
+  const mine = (S.paper?.open || []).filter((t) => t.symbol === S.sym && S.source !== 'tv');
+  for (const p of Object.values(S.panes)) {
+    for (const l of p.plines) p.candles.removePriceLine(l);
+    p.plines = [];
+    for (const t of mine) {
+      const m = paperMark(t), col = t.side === 1 ? '#089981' : '#f23645';
+      p.plines.push(p.candles.createPriceLine({ price: t.entry, color: col, lineWidth: 2, lineStyle: 0, axisLabelVisible: true,
+        title: `#${t.id} ${t.side === 1 ? 'LONG' : 'SHORT'} x${t.lev} ${m ? sgn(m.net) + ' USDC' : ''}` }));
+      p.plines.push(p.candles.createPriceLine({ price: t.liq, color: '#f7a600', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: `#${t.id} liq` }));
+    }
+  }
+}
+function renderPaper() {
+  const P = S.paper; if (!P || !S.data) return;
+  const px = lastPrice(), cfg = P.cfg;
+  document.querySelectorAll('.trade').forEach((w) => {
+    $('.buy .px', w).textContent = fmt(px); $('.sell .px', w).textContent = fmt(px);
+    $('.tcfg', w).textContent = `Paper · x${cfg.lev} · ${fmt(cfg.margin)} USDC margin · ${fmt(cfg.lev * cfg.margin, 0)} notional`;
+    w.classList.toggle('off', S.source === 'tv');
+  });
+  renderPaperLines();
+  let upnl = 0;
+  const rows = P.open.map((t) => {
+    const m = paperMark(t); if (m) upnl += m.net;
+    return `<tr><td class="${t.side === 1 ? 'bull' : 'bear'}">#${t.id} ${t.side === 1 ? 'L' : 'S'} ${t.symbol}</td><td>${fmt(t.entry)}</td><td>${m ? fmt(m.px) : '—'}</td>
+      <td class="${m && m.net >= 0 ? 'bull' : 'bear'}">${m ? sgn(m.net) : '—'}<br><small>${m ? sgn(m.roe, 1) + '%' : ''}</small></td><td><button class="tbtn xs" data-close="${t.id}">Close</button></td></tr>`;
+  }).join('');
+  const hist = P.closed.slice(0, 8).map((t) => `<div class="alert"><span class="t">${fmtTime(t.exit_ts)}</span><b>${t.symbol}</b><span class="${t.side === 1 ? 'bull' : 'bear'}">${t.side === 1 ? 'L' : 'S'}</span><span class="muted">${fmt(t.entry)}→${fmt(t.exit)}${t.reason === 'liquidated' ? ' · liq' : ''}</span><span class="${t.pnl >= 0 ? 'bull' : 'bear'}" style="margin-left:auto">${sgn(t.pnl)}</span></div>`).join('');
+  $('#paperBlock').innerHTML = `
+    <div class="kv"><span>Paper balance</span><span><b>${fmt(P.balance + upnl)}</b> USDC</span>
+      <span>Open P&amp;L · realized</span><span><span class="${upnl >= 0 ? 'bull' : 'bear'}">${sgn(upnl)}</span> · <span class="${P.realized >= 0 ? 'bull' : 'bear'}">${sgn(P.realized)}</span></span>
+      <span>Closed trades · wins</span><span>${P.n_closed} · ${P.wins}</span><span>Free margin</span><span>${fmt(P.free)} USDC</span></div>
+    ${P.open.length ? `<table style="margin-top:6px"><tr><th>Trade</th><th>Entry</th><th>Now</th><th>Net USDC</th><th></th></tr>${rows}</table>` : '<div class="muted" style="margin-top:6px">No open paper trades. Use LONG / SHORT on the large chart.</div>'}
+    ${hist ? `<div style="margin-top:6px">${hist}</div>` : ''}
+    <div class="note">Fictitious: x${cfg.lev}, ${fmt(cfg.margin)} USDC margin per trade, filled at the futures price, taker fee both sides, liquidated at the orange line (margin lost). No funding.</div>`;
+  $('#paperBlock').querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => paperClose(Number(b.dataset.close)); });
+}
+
 // ── delta-neutral oil pair (Omni USOIL-SWAP / UKOIL-SWAP) ─────────────────
 function pairStats(r) {
   const o = r?.oos; if (!o || !o.n) return '—';
   return `${o.n} trades · hit ${o.hit.toFixed(0)}% · ${sgn(o.mean_pct)}%/trade${o.ci_pct ? ` (95% ${sgn(o.ci_pct[0])}…${sgn(o.ci_pct[1])})` : ''}`;
 }
-function zSpark(hist, zin) {
+function zSpark(hist, zin, tf) {
   if (!hist || hist.length < 2) return '';
   const W = 300, H = 64, n = hist.length, y = (z) => H / 2 - Math.max(-4, Math.min(4, z)) / 4 * (H / 2 - 2);
   const pts = hist.map(([, z], i) => `${(i / (n - 1) * W).toFixed(1)},${y(z).toFixed(1)}`).join(' ');
@@ -351,20 +416,38 @@ function zSpark(hist, zin) {
     <line x1="0" x2="${W}" y1="${y(zin)}" y2="${y(zin)}" stroke="${css('--muted')}" stroke-dasharray="3 3"/>
     <line x1="0" x2="${W}" y1="${y(-zin)}" y2="${y(-zin)}" stroke="${css('--muted')}" stroke-dasharray="3 3"/>
     <polyline points="${pts}" fill="none" stroke="${css('--accent')}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
-    <div class="zscale"><span>${fmtTime(hist[0][0])}</span><span>last ${n} × ${S.data.pair.snap.params.tf}</span><span>${fmtTime(hist[n - 1][0])}</span></div>`;
+    <div class="zscale"><span>${fmtTime(hist[0][0])}</span><span>last ${n} × ${tf}</span><span>${fmtTime(hist[n - 1][0])}</span></div>`;
+}
+const MODE_TXT = { revert: 'Fade back to the mean', trend: 'Follow the stretch' };
+function pairValidation(pr) {
+  const keys = Object.keys(pr.reports).sort();
+  const rows = keys.map((k) => { const [m, tf] = k.split('_'); const r = pr.reports[k];
+    return `<span>${MODE_TXT[m] || m} · ${tf || (r.tfs || []).join('/') || ''}</span><span>${pairStats(r)}</span>`; }).join('');
+  const proven = keys.filter((k) => (pr.reports[k].oos?.ci_pct || [-1])[0] > 0);
+  const src = pr.snap?.source === 'omni' || pr.a === 'US100'
+    ? 'Validated on the old Yahoo cache (US cash session: 5m since Jul 2026, 1h since Nov 2023); live spread from the Omni marks.'
+    : 'Statistics from the Binance perps on the same oil.';
+  return `<details style="margin-top:8px"><summary class="ptitle">Out-of-sample test ${pr.validated ? '<span class="skill ok">validated</span>' : '<span class="skill none">not validated</span>'}</summary>
+    <div class="kv" style="margin-top:6px">${rows}</div>
+    <div class="note">Walk-forward: settings chosen only on earlier data, net of fees, slippage and spread on both legs. ${proven.length ? `Proven (95% range above zero): ${proven.join(', ')}.` : 'No mode has a 95% range above zero, so none is a proven edge.'} ${src} Regenerate with research/pair_validate.py.</div></details>`;
 }
 function renderPair() {
   const wrap = $('#pairWrap'), pr = S.data?.pair;
   if (!pr) { wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
+  $('#pairTitle').textContent = `Delta-neutral pair · ${pr.a} / ${pr.b}`;
   const sn = pr.snap, A = pr.a, B = pr.b;
   const ma = S.live[A]?.mark ?? pr.marks[A], mb = S.live[B]?.mark ?? pr.marks[B];
-  if (!sn) { $('#pairBlock').innerHTML = '<div class="muted">Not enough CL / BZ history yet.</div>'; return; }
+  const head = `<div class="kv"><span>${pr.omni[A]}</span><span>${fmt(ma, 3)}</span><span>${pr.omni[B]}</span><span>${fmt(mb, 3)}</span>
+      <span>Ratio ${B} / ${A}</span><span>${ma && mb ? fmt(mb / ma, 4) : '—'}</span>${sn && !sn.collecting ? `<span>Hedge β · correlation</span><span>${fmt(sn.beta)} · ${fmt(sn.corr)}</span>` : ''}</div>`;
+  if (!sn || sn.collecting) {
+    const p = sn?.params;
+    $('#pairBlock').innerHTML = head + `<div class="muted" style="margin-top:8px">Collecting the live ${A} / ${B} spread from the Omni marks: ${sn ? `${sn.have} of ${sn.need} ${p.tf} bars` : 'not enough history'}. The z-score appears once the window fills while the market is moving (about ${p ? Math.ceil((sn.need - sn.have) * TF_SEC[p.tf] / 3600) : '?'} h of open market).</div>` + pairValidation(pr);
+    return;
+  }
   const p = sn.params, z = pr.z;
   const pos = (v) => Math.max(0, Math.min(100, (v + 4) / 8 * 100));
   const rich = z >= 0 ? `${A} rich vs ${B}` : `${A} cheap vs ${B}`;
-  const modeTxt = pr.mode === 'trend' ? 'Follow the stretch' : 'Fade back to the mean';
-  const tag = pr.validated ? '<span class="skill ok">validated</span>' : '<span class="skill none">not validated</span>';
   const sp = pr.setup;
   const legs = sp ? `<div class="sig ${sp.legs[0].side === 1 ? 'bull' : 'bear'}">${sp.legs.map((l) => `${l.side === 1 ? 'LONG' : 'SHORT'} ${l.leg}`).join(' / ')}</div>
       <table class="legs"><tr><th>Leg</th><th>Omni mark</th><th>Notional</th></tr>${sp.legs.map((l) => `<tr><td class="${l.side === 1 ? 'bull' : 'bear'}">${l.side === 1 ? 'Long' : 'Short'} ${l.ticker}</td><td>${fmt(l.mark, 3)}</td><td>${fmt(l.notional)} USDC</td></tr>`).join('')}</table>
@@ -373,24 +456,19 @@ function renderPair() {
       <span>Target (z ${sgn(sp.target_z, 1)})</span><span class="bull">+${fmt(sp.target_usdc)} USDC</span>
       <span>Costs (both legs, round trip)</span><span>${fmt(sp.cost_usdc)} USDC</span>
       <span>Funding carry</span><span class="${sp.carry_usdc_day >= 0 ? 'bull' : 'bear'}">${sgn(sp.carry_usdc_day)} USDC / day</span></div>
-      <div class="note">${sp.oil_delta_note} Mode: ${modeTxt.toLowerCase()} (time stop ${p.max_hold} bars).</div>`
+      <div class="note">${B} leg = β ${fmt(sn.beta)} × ${A} leg, so a move in the whole market cancels out (return correlation ${fmt(sn.corr)}). Mode: ${(MODE_TXT[sp.mode] || sp.mode).toLowerCase()} (time stop ${p.max_hold} bars).</div>`
+    : sn.stale ? `<div class="muted">No setup: the latest ${p.tf} bar is from ${fmtTime(sn.ts)} (market closed or the server was off).</div>`
     : `<div class="muted">No setup: |z| ${Math.abs(z).toFixed(2)} &lt; ${p.z_in}. A trade appears when the spread stretches past ±${p.z_in}.</div>`;
   const c1 = pr.carry_per_1k || {};
-  $('#pairBlock').innerHTML = `
-    <div class="kv"><span>${pr.omni[A]}</span><span>${fmt(ma, 3)}</span><span>${pr.omni[B]}</span><span>${fmt(mb, 3)}</span>
-      <span>Brent − WTI</span><span>${ma && mb ? fmt(mb - ma, 3) : '—'}</span>
-      <span>Hedge β · correlation</span><span>${fmt(sn.beta)} · ${fmt(sn.corr)}</span></div>
+  $('#pairBlock').innerHTML = head + `
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><span class="zbig">z ${sgn(z)}</span><span class="muted">${rich}${sn.z_live == null ? ' · last closed bar' : ' · live'}</span></div>
-    <div class="zmeter" title="z-score of the hedged spread log(WTI) − β·log(Brent) vs its ${p.window}-bar mean (${p.tf})"><span class="zband" style="left:${pos(-p.z_in)}%;width:${pos(p.z_in) - pos(-p.z_in)}%"></span><i style="left:${pos(z)}%"></i></div>
+    <div class="zmeter" title="z-score of the hedged spread log(${A}) − β·log(${B}) vs its ${p.window}-bar mean (${p.tf})"><span class="zband" style="left:${pos(-p.z_in)}%;width:${pos(p.z_in) - pos(-p.z_in)}%"></span><i style="left:${pos(z)}%"></i></div>
     <div class="zscale"><span>−4</span><span>−${p.z_in}</span><span>0</span><span>+${p.z_in}</span><span>+4</span></div>
-    ${zSpark(sn.z_hist, p.z_in)}
+    ${zSpark(sn.z_hist, p.z_in, p.tf)}
     <div style="margin-top:8px">${legs}</div>
     <div class="kv" style="margin-top:6px"><span>Carry long ${A} / short ${B}</span><span class="${c1['1'] >= 0 ? 'bull' : 'bear'}">${sgn(c1['1'])} USDC/day per 1k</span>
       <span>Carry long ${B} / short ${A}</span><span class="${c1['-1'] >= 0 ? 'bull' : 'bear'}">${sgn(c1['-1'])} USDC/day per 1k</span></div>
-    <details style="margin-top:8px"><summary class="ptitle">Out-of-sample test ${tag}</summary>
-      <div class="kv" style="margin-top:6px"><span>Follow the stretch</span><span>${pairStats(pr.reports.trend)}</span>
-      <span>Fade to the mean</span><span>${pairStats(pr.reports.revert)}</span></div>
-      <div class="note">Walk-forward since ${pr.reports.trend?.oos_from ? fmtTime(pr.reports.trend.oos_from) : '—'}: settings chosen only on earlier data, net of fees, slippage and spread on both legs. Fading the spread lost money; following it is positive on average but its 95% range still includes zero, so neither is a proven edge. Regenerate with research/pair_validate.py.</div></details>`;
+    ${pairValidation(pr)}`;
 }
 function lastPrice() {
   const c = S.data?.charts['5m'];
@@ -431,6 +509,8 @@ function tickLive() {
 }
 function applyCandles(updates) {
   // Live futures candles (Binance / Hyperliquid), pushed every 5 s around the clock.
+  for (const [sym, tfs] of Object.entries(updates || {})) { const r = tfs['5m']; if (r?.length) S.lastPx[sym] = r[r.length - 1].close; }
+  renderPaper();
   const u = updates?.[S.sym];
   if (!u || !S.data) return;
   for (const tf of TFS) {
@@ -463,7 +543,7 @@ async function load() {
   const r = await fetch(`/api/state?symbol=${S.sym}`);
   const d = await r.json();
   if (d.error) { S.sym = 'NVDA'; store.set('sym', 'NVDA'); return load(); }
-  S.data = shiftPayload(d); S.live = d.live || {}; S.sessionOpen = d.session_open;
+  S.data = shiftPayload(d); S.live = d.live || {}; S.sessionOpen = d.session_open; S.paper = d.paper;
   $('#tzBtn').textContent = `🕒 ${tzLabel()}`;
   if (!$('#symbols').children.length) buildSymbols(d.groups);
   renderAll(); tickLive();
@@ -486,6 +566,8 @@ function connect() {
         for (const tf of TFS) renderOracleLine(S.panes[tf]);
       }
       renderOracle();
+    } else if (m.type === 'paper') {
+      S.paper = m.paper; renderPaper(); paperEvent(m.event);
     } else if (m.type === 'candles') {
       applyCandles(m.candles);
       setStatus(!m.meta.candle_error, m.meta.candle_error ? `${S.data?.market.source || 'Feed'} error` : `live 24/7 · ${fmtTime(m.meta.last_candles)}`);

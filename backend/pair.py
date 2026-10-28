@@ -13,6 +13,8 @@ Statistics come from the Binance perps (CL, BZ); the trade is placed on the Omni
 """
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -107,21 +109,63 @@ def leg_costs(S: dict, spread_bps: float, fee_pct: float) -> float:
 
 
 # ── live view ──────────────────────────────────────────────────────────────
-def snapshot(cfg: dict, p: dict = DEFAULT) -> dict | None:
+def aligned_omni(a: str, b: str, tf: str) -> tuple[pd.DataFrame, tuple[float, float] | None]:
+    """Omni mark buckets (5 s ticks → tf bars, 24h) of both legs: closed bars + the forming bar's closes."""
+    ba, bb = data.load_omni_bars(a, tf, days=30), data.load_omni_bars(b, tf, days=30)
+    da = pd.DataFrame(ba).rename(columns={"time": "ts", "close": "close_a"})
+    db = pd.DataFrame(bb).rename(columns={"time": "ts", "close": "close_b"})
+    if da.empty or db.empty:
+        return pd.DataFrame(columns=["ts", "close_a", "close_b"]), None
+    df = da[["ts", "close_a"]].merge(db[["ts", "close_b"]], on="ts").sort_values("ts").reset_index(drop=True)
+    now_bucket = data.omni_bucket(int(time.time()), tf)
+    forming = df[df["ts"] == now_bucket]
+    live = (float(forming["close_a"].iloc[-1]), float(forming["close_b"].iloc[-1])) if len(forming) else None
+    df = df[df["ts"] < now_bucket].reset_index(drop=True)
+    # keep only the latest unbroken run: a gap of more than 2 missing bars (server off) starts a new history
+    sec = data.TF_MINUTES[tf] * 60
+    breaks = np.flatnonzero(np.diff(df["ts"].to_numpy()) > 3 * sec)
+    if len(breaks):
+        df = df.iloc[breaks[-1] + 1:].reset_index(drop=True)
+    return df, live
+
+
+def _moving(df: pd.DataFrame, window: int) -> bool:
+    """True when both legs actually traded in most of the last `window` bars (not a closed, flat market)."""
+    tail = df.iloc[-window:]
+    ch = lambda c: (tail[c].diff().iloc[1:] != 0).mean()
+    return len(tail) >= window and ch("close_a") >= 0.6 and ch("close_b") >= 0.6
+
+
+def snapshot(cfg: dict, p: dict | None = None) -> dict | None:
     """Current β, z-score (last closed bar and live, using the forming bar) and recent z history."""
-    pa, pb = cfg["proxy"][cfg["a"]], cfg["proxy"][cfg["b"]]
-    df = aligned(pa, pb, p["tf"], limit=p["window"] * 4)
-    if len(df) < p["window"] + 10:
-        return None
+    p = p or cfg.get("params") or DEFAULT
+    if cfg.get("history") == "omni":
+        df, live = aligned_omni(cfg["a"], cfg["b"], p["tf"])
+        if len(df) < p["window"] + 10 or not _moving(df, p["window"]):
+            moving = int(sum((df["close_a"].diff() != 0) & (df["close_b"].diff() != 0))) if len(df) else 0
+            return {"collecting": True, "have": min(moving, p["window"] + 10), "need": p["window"] + 10, "params": p}
+    else:
+        live = None
+        df = aligned(cfg["proxy"][cfg["a"]], cfg["proxy"][cfg["b"]], p["tf"], limit=p["window"] * 4)
+        if len(df) < p["window"] + 10:
+            return None
     st = spread_stats(df, p["window"], p["hedge"])
     last = st.iloc[-1]
+    if not np.isfinite([last["beta"], last["z"], last["sd"]]).all():     # flat prices (market closed) so far
+        return {"collecting": True, "have": int(np.isfinite(st["z"]).sum()), "need": p["window"] + 10, "params": p}
     out = {k: float(last[k]) for k in ("beta", "spread", "mean", "sd", "z", "corr")}
-    out.update(ts=int(last["ts"]), proxy=[pa, pb], params=p, z_live=None,
+    out.update(ts=int(last["ts"]), params=p, z_live=None, source=cfg.get("history"),
                z_hist=[[int(t), round(float(z), 3)] for t, z in zip(st["ts"].iloc[-240:], st["z"].iloc[-240:]) if z == z])
-    fa, fb = data.load_bars(pa, p["tf"], 1), data.load_bars(pb, p["tf"], 1)
-    if len(fa) and len(fb) and not fa["closed"].iloc[-1] and not fb["closed"].iloc[-1]:
-        s = np.log(fa["close"].iloc[-1]) - out["beta"] * np.log(fb["close"].iloc[-1])
+    if cfg.get("history") != "omni":
+        fa = data.load_bars(cfg["proxy"][cfg["a"]], p["tf"], 1)
+        fb = data.load_bars(cfg["proxy"][cfg["b"]], p["tf"], 1)
+        if len(fa) and len(fb) and not fa["closed"].iloc[-1] and not fb["closed"].iloc[-1]:
+            live = (float(fa["close"].iloc[-1]), float(fb["close"].iloc[-1]))
+    if live:
+        s = np.log(live[0]) - out["beta"] * np.log(live[1])
         out["z_live"] = float((s - out["mean"]) / out["sd"])
+    # Omni history has gaps whenever the server was off: no trade until the latest bar is recent
+    out["stale"] = time.time() - out["ts"] > 3 * data.TF_MINUTES[p["tf"]] * 60 + data.TF_MINUTES[p["tf"]] * 60
     return out
 
 
@@ -137,25 +181,26 @@ def _per_day(q: dict, d: int, S: dict) -> float:
 def suggest(cfg: dict, snap: dict | None, live: dict, S: dict, reports: dict) -> dict:
     """Neutral two-leg trade on the Omni swaps when |z| ≥ z_in, sized so a stop-out loses risk_pct."""
     out = {"label": cfg["label"], "a": cfg["a"], "b": cfg["b"], "omni": cfg["omni"], "snap": snap,
-           "reports": {m: {k: r.get(k) for k in ("oos", "oos_funding_today", "by_dir", "oos_from", "period", "generated")}
+           "reports": {m: {k: r.get(k) for k in ("oos", "oos_funding_today", "by_dir", "oos_from", "period", "generated", "tfs")}
                        for m, r in reports.items()}}
     qa, qb = live.get(cfg["a"]) or {}, live.get(cfg["b"]) or {}
     out["marks"] = {cfg["a"]: qa.get("mark"), cfg["b"]: qb.get("mark")}
     out["funding"] = {cfg["a"]: [qa.get("funding_annual_long"), qa.get("funding_annual_short")],
                       cfg["b"]: [qb.get("funding_annual_long"), qb.get("funding_annual_short")]}
-    if not snap:
+    if not snap or snap.get("collecting"):
+        out["snap"] = snap
         return out
     p = snap["params"]
     z = snap["z_live"] if snap["z_live"] is not None else snap["z"]
     # mode with the better out-of-sample mean; it counts as validated only if its 95% CI is above zero
-    scored = [(m, (r.get("oos") or {}).get("mean_pct")) for m, r in reports.items()]
+    scored = [(m, (r.get("oos") or {}).get("mean_pct")) for m, r in reports.items() if m in ("revert", "trend")]
     scored = [x for x in scored if x[1] is not None]
     mode = max(scored, key=lambda x: x[1])[0] if scored else "trend"
     ci = ((reports.get(mode) or {}).get("oos") or {}).get("ci_pct")
     out.update(mode=mode, validated=bool(ci and ci[0] > 0), z=z)
     for d in (1, -1):        # carry of each orientation, per 1 000 USDC on leg A (β-hedged leg B)
         out.setdefault("carry_per_1k", {})[str(d)] = -1000 * (_per_day(qa, d, S) + snap["beta"] * _per_day(qb, -d, S))
-    if abs(z) < p["z_in"] or not qa.get("mark") or not qb.get("mark"):
+    if snap.get("stale") or abs(z) < p["z_in"] or not qa.get("mark") or not qb.get("mark"):
         out["setup"] = None
         return out
     side = 1 if z > 0 else -1

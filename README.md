@@ -41,10 +41,34 @@ shows that skill next to every probability; a signal appears only if a probabili
   Rerun with:
 
   ```bash
-  .venv/bin/python -W ignore research/pair_validate.py revert
-  .venv/bin/python -W ignore research/pair_validate.py trend
+  .venv/bin/python -W ignore research/pair_validate.py revert oil
+  .venv/bin/python -W ignore research/pair_validate.py trend oil
   .venv/bin/python -W ignore research/prob_validate.py oil
   ```
+
+## US100 / US30 pair (delta scalping check)
+
+- Omni US100-SWAP / US30-SWAP, beta-hedged like the oil pair. No free source has US30 candles, so the live
+  spread is built from the Omni marks (5 s ticks → 5m bars). It shows "collecting" until 106 bars of a
+  moving market have been recorded without gaps.
+- Validated on the old Yahoo cache (`data/bars.sqlite`, US cash session), walk-forward, net of costs:
+  - 5m, fading the spread: 37 trades, −0.17% per trade (95% range below zero, so it loses).
+  - 5m, following it: 29 trades, +0.15% per trade, but the range includes zero.
+  - 1h over 3 years: fading +0.55% per trade (21 trades, range includes zero); following −0.16%.
+
+  Scalping the pair on 5m does not show an edge: costs on both legs (≈0.13% round trip) eat the small moves.
+
+  ```bash
+  .venv/bin/python -W ignore research/pair_validate.py revert index
+  .venv/bin/python -W ignore research/pair_validate.py revert index 1h
+  ```
+
+## Paper trading
+
+LONG / SHORT buttons on the large futures chart open a fictitious trade at the futures price, always x15 with
+12 USDC margin (180 USDC notional). The panel shows open P&L (after fees), a Close button and the history. A
+trade is liquidated, and its margin lost, when the price touches the orange liquidation line. Funding is not
+charged. Change the fixed size in `PAPER` in `backend/config.py`.
 
 ## Run
 

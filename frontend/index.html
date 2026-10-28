@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FVG-ICT Charts</title>
-<link rel="stylesheet" href="/static/style.css?v=16">
+<link rel="stylesheet" href="/static/style.css?v=18">
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
@@ -42,7 +42,8 @@
   <section id="grid" class="grid layout-focus"></section>
   <aside id="panel">
     <div class="pblock" id="quoteBlock"></div>
-    <div class="pblock hidden" id="pairWrap"><div class="ptitle">Delta-neutral pair · WTI / Brent <span class="hint" title="Long one oil benchmark and short the other on the Omni swaps, sized by the hedge ratio β so a move in the oil price itself cancels out. The trade is on the spread between them. Statistics come from the Binance perps CL and BZ.">?</span></div><div id="pairBlock"></div></div>
+    <div class="pblock"><div class="ptitle">Paper trading <span class="hint" title="Fictitious trades from the LONG / SHORT buttons on the large futures chart. Always the same leverage and margin.">?</span></div><div id="paperBlock"></div></div>
+    <div class="pblock hidden" id="pairWrap"><div class="ptitle"><span id="pairTitle">Delta-neutral pair</span> <span class="hint" title="Long one market and short the other on the Omni swaps, sized by the hedge ratio β so a move of the whole market cancels out. The trade is on the spread between them.">?</span></div><div id="pairBlock"></div></div>
     <div class="pblock"><div class="ptitle">Oracle check <span class="hint" title="Runs in parallel with the chart feed: the venue's own index price and a CoinGecko consensus across all perp venues.">?</span></div><div id="oracleBlock"></div></div>
     <div class="pblock"><div class="ptitle">Long / Short probability <span class="hint" title="Probability that price reaches +1×ATR before −1×ATR (long) from the next bar, within the horizon. 50% = no edge.">?</span></div><div id="probBlock"></div></div>
     <div class="pblock"><div class="ptitle">Signal</div><div id="signalBlock"></div></div>
@@ -50,7 +51,7 @@
     <div class="pblock"><div class="ptitle">FVG-ICT table</div><div id="tableBlock"></div></div>
     <div class="pblock"><details id="validDetails"><summary class="ptitle">Model validation</summary><div id="validBlock"></div></details></div>
     <div class="pblock"><div class="ptitle">Alerts</div><div id="alertBlock"></div></div>
-    <p class="foot">Pine port: FVG ICT — Confluencias (Sweep · MSS · OB · P/D · OR). Charts: Binance USD-M futures (AMD, NVDA, SOXL, CL = WTI, BZ = Brent) and Hyperliquid xyz:XYZ100 (US100), 24/7. Oil pair: Omni USOIL-SWAP / UKOIL-SWAP. Omni: live mark only. Not financial advice.</p>
+    <p class="foot">Pine port: FVG ICT — Confluencias (Sweep · MSS · OB · P/D · OR). Charts: Binance USD-M futures (AMD, NVDA, SOXL, CL = WTI, BZ = Brent) and Hyperliquid xyz:XYZ100 (US100), 24/7. Pairs: Omni USOIL-SWAP / UKOIL-SWAP and US100-SWAP / US30-SWAP. Paper trades are fictitious. Omni: live mark only. Not financial advice.</p>
   </aside>
 </main>
 
@@ -62,7 +63,7 @@
   </form>
 </dialog>
 
-<script src="/static/overlay.js?v=16"></script>
-<script src="/static/app.js?v=16"></script>
+<script src="/static/overlay.js?v=18"></script>
+<script src="/static/app.js?v=18"></script>
 </body>
 </html>

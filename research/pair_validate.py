@@ -5,7 +5,8 @@ Before each block the parameters (timeframe, window, entry z, exit z, hedge) are
 before it, then traded unchanged on the block. Only block trades count, so every number is out of sample.
 Costs: Omni swap fee + slippage + spread on both legs, both sides. Funding: today's Omni rates held
 constant (a scenario — past rates are not published), reported separately.
-Writes research/pair_report_<mode>.json.  Run: .venv/bin/python -W ignore research/pair_validate.py [revert|trend]
+Writes research/pair_report_<group>_<mode>[_<tf>].json.
+Run: .venv/bin/python -W ignore research/pair_validate.py [revert|trend] [oil|index] [tf]
 """
 from __future__ import annotations
 
@@ -25,8 +26,16 @@ sys.path.insert(0, str(HERE.parent))
 from backend import data, pair, stats  # noqa: E402
 from backend.config import PAIRS, SETTINGS  # noqa: E402
 
-GRID = {"tf": ["15m", "1h"], "window": [96, 192, 384], "z_in": [1.5, 2.0, 2.5], "z_out": [0.0, 0.5], "hedge": ["beta", "dollar"]}
 MODE = sys.argv[1] if len(sys.argv) > 1 else "revert"      # "revert" (classic pair) or "trend"
+GROUP = sys.argv[2] if len(sys.argv) > 2 else "oil"         # key of PAIRS
+TF_ARG = sys.argv[3] if len(sys.argv) > 3 else None         # optional: validate a single timeframe
+# windows in bars per timeframe. The index history is the US cash session only (78 × 5m or 7 × 1h bars a day).
+WINDOWS = {"oil": {"15m": [96, 192, 384], "1h": [96, 192, 384]},
+           "index": {"5m": [48, 96, 192], "15m": [26, 52, 104], "1h": [35, 70, 140]}}
+DEFAULT_TFS = {"oil": ["15m", "1h"], "index": ["5m"]}
+TFS = [TF_ARG] if TF_ARG else DEFAULT_TFS[GROUP]
+GRID = {"z_in": [1.5, 2.0, 2.5], "z_out": [0.0, 0.5], "hedge": ["beta", "dollar"]}
+YAHOO_CACHE = HERE.parent / "data" / "bars.sqlite"   # old Yahoo cache: US100 / US30 index bars, cash session
 BLOCKS, START = 6, 0.4
 MIN_TRADES = 15
 
@@ -56,18 +65,30 @@ def with_funding(trades, live, cfg):
     return out
 
 
+def history(cfg, tf):
+    """Aligned closes of both legs: Binance perps (oil) or the old Yahoo index cache (US100 / US30)."""
+    if cfg["history"] == "binance":
+        return pair.aligned(cfg["proxy"][cfg["a"]], cfg["proxy"][cfg["b"]], tf, limit=10 ** 6)
+    import sqlite3
+    import pandas as pd
+    with sqlite3.connect(YAHOO_CACHE) as con:
+        q = ("SELECT a.ts, a.close AS close_a, b.close AS close_b FROM bars a JOIN bars b ON a.ts = b.ts AND a.tf = b.tf"
+             " WHERE a.symbol = ? AND b.symbol = ? AND a.tf = ? ORDER BY a.ts")
+        return pd.read_sql_query(q, con, params=(cfg["a"], cfg["b"], tf))
+
+
 def main():
-    cfg = PAIRS["oil"]
-    pa, pb = cfg["proxy"][cfg["a"]], cfg["proxy"][cfg["b"]]
+    cfg = PAIRS[GROUP]
     cost2 = 2 * pair.leg_costs(SETTINGS, cfg["spread_bps"], SETTINGS[cfg["fee_key"]])   # both legs, β = 1
     print(f"round-trip cost, both legs: {cost2 * 100:.3f}% of one leg's notional")
 
     # all trades per parameter set (spread statistics are causal, so one pass over the full history)
     sims, span = {}, {}
-    for tf in GRID["tf"]:
-        df = pair.aligned(pa, pb, tf, limit=10 ** 6)
+    for tf in TFS:
+        df = history(cfg, tf)
         span[tf] = (int(df["ts"].iloc[0]), int(df["ts"].iloc[-1]))
-        for w, h in itertools.product(GRID["window"], GRID["hedge"]):
+        print(f"{tf}: {len(df)} aligned bars {datetime.utcfromtimestamp(span[tf][0]):%Y-%m-%d} → {datetime.utcfromtimestamp(span[tf][1]):%Y-%m-%d}")
+        for w, h in itertools.product(WINDOWS[GROUP][tf], GRID["hedge"]):
             st = pair.spread_stats(df, w, h)
             for zi, zo in itertools.product(GRID["z_in"], GRID["z_out"]):
                 p = params(tf, w, zi, zo, h)
@@ -100,23 +121,25 @@ def main():
             return await data.fetch_omni(c)
     lv = asyncio.run(live())
     res = {"oos": pair.summary(oos), "oos_funding_today": pair.summary(with_funding(oos, lv, cfg))}
-    fixed = sims[tuple(params(**{k: v for k, v in pair.DEFAULT.items() if k in GRID}).values())]
-    fixed_oos = [t for t in fixed[1] if t["entry_ts"] >= edges[0]]
-    res["default_oos"] = {"params": fixed[0], **pair.summary(fixed_oos)}
+    dp = cfg.get("params", pair.DEFAULT)
+    key = tuple(params(dp["tf"], dp["window"], dp["z_in"], dp["z_out"], dp["hedge"]).values())
+    if key in sims:
+        fixed_oos = [t for t in sims[key][1] if t["entry_ts"] >= edges[0]]
+        res["default_oos"] = {"params": sims[key][0], **pair.summary(fixed_oos)}
     # the in-sample best, to show how much a grid search flatters itself
     ins = max(sims.values(), key=lambda v: score(v[1]))
     res["in_sample_best"] = {"params": ins[0], **pair.summary(ins[1])}
     print("OOS walk-forward      :", res["oos"])
     print("OOS + today's funding :", res["oos_funding_today"])
-    print("default params, OOS   :", res["default_oos"])
+    print("default params, OOS   :", res.get("default_oos"))
     print("in-sample best (biased):", res["in_sample_best"])
     by_dir = {d: pair.summary([t for t in oos if t["dir"] == d]) for d in (1, -1)}
-    print("OOS by direction (+1 long WTI/short Brent):", by_dir)
-    out = {"generated": int(time.time()), "mode": MODE, "cost_round_trip_pct": cost2 * 100, "period": [int(t0), int(t1)],
+    print(f"OOS by direction (+1 = long {cfg['a']} / short {cfg['b']}):", by_dir)
+    out = {"generated": int(time.time()), "mode": MODE, "group": GROUP, "tfs": TFS, "cost_round_trip_pct": cost2 * 100, "period": [int(t0), int(t1)],
            "oos_from": int(edges[0]), "blocks": picks, "by_dir": {str(k): v for k, v in by_dir.items()},
            "funding_today": {leg: {"long": lv[leg]["funding_annual_long"], "short": lv[leg]["funding_annual_short"]}
                              for leg in (cfg["a"], cfg["b"])}, **res}
-    (HERE / f"pair_report_{MODE}.json").write_text(json.dumps(out, indent=1, default=float))
+    (HERE / f"pair_report_{GROUP}_{MODE}{'_' + TF_ARG if TF_ARG else ''}.json").write_text(json.dumps(out, indent=1, default=float))
 
 
 if __name__ == "__main__":

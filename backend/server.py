@@ -20,7 +20,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, pair, prob, stats
+from . import data, ict, pair, paper, prob, stats
 from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, PAIRS, SETTINGS, SOURCE_LABEL, SYMBOLS,
                      TRADINGVIEW_SYMBOL)
 from .portfolio import fee_pct, max_lev
@@ -33,7 +33,7 @@ VIEW_TFS = ["5m", "15m", "1h"]
 HTF = {"5m": "1h", "15m": "1h", "1h": "4h"}
 CALC_TFS = ["5m", "15m", "1h", "4h"]
 REPORT = FRONTEND_DIR.parent / "research" / "prob_report.json"
-PAIR_REPORTS = {m: FRONTEND_DIR.parent / "research" / f"pair_report_{m}.json" for m in ("revert", "trend")}
+RESEARCH = FRONTEND_DIR.parent / "research"
 
 STATE: dict = {}          # (symbol, tf) -> {bars, forming, res, prob}
 LIVE: dict = {}           # symbol -> Omni quote
@@ -53,18 +53,24 @@ def _report() -> dict:
         return {}
 
 
-def _pair_reports() -> dict:
+def _pair_reports(g: str) -> dict:
+    """Walk-forward reports of a pair: 'revert' / 'trend' on the live timeframe, plus e.g. 'revert_1h'."""
     out = {}
-    for m, path in PAIR_REPORTS.items():
+    for path in RESEARCH.glob(f"pair_report_{g}_*.json"):
         try:
-            out[m] = json.loads(path.read_text())
+            out[path.stem.removeprefix(f"pair_report_{g}_")] = json.loads(path.read_text())
         except (OSError, ValueError):
             pass
     return out
 
 
 def _pair(g: str) -> dict:
-    return pair.suggest(PAIRS[g], PAIR_STATE.get(g), LIVE, SETTINGS, _pair_reports())
+    return pair.suggest(PAIRS[g], PAIR_STATE.get(g), LIVE, SETTINGS, _pair_reports(g))
+
+
+def _pair_for_group(group: str) -> dict | None:
+    g = next((k for k, c in PAIRS.items() if c.get("group") == group), None)
+    return _pair(g) if g else None
 
 
 # ── recompute ──────────────────────────────────────────────────────────────
@@ -167,7 +173,7 @@ def _collect_alerts() -> None:
             a, b = sp["legs"]
             _push(seen, f"{cfg['a']}/{cfg['b']}", sp.get("mode", ""), "pair", sp["dir"],
                   f"{'LONG' if a['side'] == 1 else 'SHORT'} {a['leg']} / {'LONG' if b['side'] == 1 else 'SHORT'} {b['leg']} · z {sp['z']:+.2f}",
-                  PAIR_STATE[g]["ts"])
+                  PAIR_STATE[g].get("ts", 0))
     del ALERTS[:-100]
 
 
@@ -242,12 +248,19 @@ async def candle_loop():
                 jobs = [(sym, tf) for sym in SYMBOLS for tf in CALC_TFS]
                 results = await asyncio.gather(*(data.fetch_latest(client, s_, t_) for s_, t_ in jobs),
                                                return_exceptions=True)
+                last_px = {}
                 for (sym, tf), rows in zip(jobs, results):
                     if isinstance(rows, Exception):
                         META["candle_error"] = f"{sym} {tf}: {rows}"[:200]
                         continue
                     if tf in VIEW_TFS and rows:
                         updates.setdefault(sym, {})[tf] = [_row_candle(r) for r in rows]
+                    if tf == "5m" and rows:
+                        last_px[sym] = rows[-1][4]
+                liquidated = await asyncio.to_thread(paper.check_liquidations, last_px)
+                if liquidated:
+                    await broadcast({"type": "paper", "paper": await asyncio.to_thread(paper.state),
+                                     "event": {"kind": "liquidated", "trades": liquidated}})
                 META["last_candles"] = time.time()
                 if updates:
                     META["candle_error"] = None
@@ -409,10 +422,37 @@ def api_state(symbol: str = "NVDA"):
             "oracle_hist": [[_et(t), i, v] for t, i, v in data.load_oracle(symbol)],
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),
             "omni": {tf: _omni_chart(symbol, tf) for tf in VIEW_TFS},
-            "pair": _pair(group) if group in PAIRS else None,
+            "pair": _pair_for_group(group),
             "model": {"k_atr": prob.K_ATR, "horizon": prob.HORIZON, "report_time": _report().get("generated")},
-            "live": LIVE, "alerts": ALERTS[-40:], "settings": SETTINGS, "meta": META,
+            "live": LIVE, "alerts": ALERTS[-40:], "settings": SETTINGS, "meta": META, "paper": paper.state(),
             "session_open": data.session_open()}
+
+
+@app.get("/api/paper")
+def api_paper():
+    return paper.state()
+
+
+@app.post("/api/paper/open")
+async def api_paper_open(body: dict):
+    try:
+        r = paper.open_trade(str(body.get("symbol", "")).upper(), int(body.get("side", 0)))
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, 400)
+    st = paper.state()
+    await broadcast({"type": "paper", "paper": st, "event": {"kind": "opened", **r}})
+    return st
+
+
+@app.post("/api/paper/close")
+async def api_paper_close(body: dict):
+    try:
+        r = paper.close_trade(int(body.get("id", 0)))
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, 400)
+    st = paper.state()
+    await broadcast({"type": "paper", "paper": st, "event": {"kind": "closed", **r}})
+    return st
 
 
 @app.post("/api/settings")

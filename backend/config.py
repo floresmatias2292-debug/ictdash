@@ -44,9 +44,17 @@ GROUPS = {
 # Delta-neutral pair on Omni swaps. The swaps have no free candle history, so the spread statistics come
 # from the Binance perps on the same underlying ("proxy"); entries are priced at the live Omni marks.
 PAIRS = {
-    "oil": {"label": "WTI / Brent · Omni swaps", "a": "USOIL", "b": "UKOIL",
+    "oil": {"label": "WTI / Brent · Omni swaps", "group": "oil", "a": "USOIL", "b": "UKOIL",
             "omni": {"USOIL": "USOIL-SWAP", "UKOIL": "UKOIL-SWAP"}, "proxy": {"USOIL": "CL", "UKOIL": "BZ"},
-            "fee_key": "swap_fee_pct", "spread_bps": 0.4},
+            "fee_key": "swap_fee_pct", "spread_bps": 0.4, "history": "binance"},
+    # US100 / US30 on Omni swaps. No free US30 candles exist (Binance / Hyperliquid list no Dow), so the live
+    # spread is built from the Omni marks (5 s ticks → 5m buckets) and the validation uses the old Yahoo cache
+    # (cash session, data/bars.sqlite).
+    "index": {"label": "US100 / US30 · Omni swaps", "group": "macro", "a": "US100", "b": "US30",
+              "omni": {"US100": "US100-SWAP", "US30": "US30-SWAP"}, "proxy": None,
+              "fee_key": "swap_fee_pct", "spread_bps": 0.4, "history": "omni",
+              "params": {"tf": "5m", "window": 96, "z_in": 2.0, "z_out": 0.0, "z_stop": 3.5, "max_hold": 48,
+                         "hedge": "beta"}},
 }
 
 TIMEFRAMES = ["5m", "15m", "1h", "4h"]
@@ -76,6 +84,9 @@ ICT_DEFAULTS = {
     "or_minutes": 15,
     "or_extend": 40,
 }
+
+# Paper trading on the futures chart: every fictitious trade uses this leverage and margin (USDC).
+PAPER = {"lev": 15, "margin": 12.0}
 
 SETTINGS = {
     "capital": 90.0,            # USDC
