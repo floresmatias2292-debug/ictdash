@@ -70,6 +70,18 @@ LONG / SHORT buttons on the large futures chart open a fictitious trade at the f
 trade is liquidated, and its margin lost, when the price touches the orange liquidation line. Funding is not
 charged. Change the fixed size in `PAPER` in `backend/config.py`.
 
+## Install on another computer
+
+```bash
+git clone https://github.com/floresmatias2292-debug/ictdash.git ~/dashboard/ictdash
+bash ~/dashboard/ictdash/deploy/install.sh
+```
+
+Needs Python 3.11+ with `python3-venv`. The script creates `.venv`, installs `requirements.txt` and starts the
+dashboard as a user service at http://localhost:8050. The first start downloads the price history from Binance
+and Hyperliquid. To bring paper trades and the collected Omni prices along, copy `data/market.sqlite` from the
+old computer before running the script.
+
 ## Run
 
 Permanent (systemd user service, restarts on failure, starts at login):
