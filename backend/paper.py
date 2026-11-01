@@ -20,11 +20,13 @@ def _db():
     con.execute("CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, side INTEGER,"
                 " lev REAL, margin REAL, notional REAL, entry REAL, entry_ts INTEGER, liq REAL, fee_rate REAL,"
                 " exit REAL, exit_ts INTEGER, pnl REAL, status TEXT, reason TEXT)")
+    if "tag" not in [r[1] for r in con.execute("PRAGMA table_info(paper_trades)")]:
+        con.execute("ALTER TABLE paper_trades ADD COLUMN tag TEXT")      # e.g. "pair-1793...": legs opened together
     return con
 
 
 COLS = ["id", "symbol", "side", "lev", "margin", "notional", "entry", "entry_ts", "liq", "fee_rate", "exit", "exit_ts",
-        "pnl", "status", "reason"]
+        "pnl", "status", "reason", "tag"]
 
 
 def last_price(sym: str) -> float | None:
@@ -61,23 +63,40 @@ def state() -> dict:
             "n_closed": n, "wins": wins, "cfg": PAPER, "start": SETTINGS["capital"]}
 
 
-def open_trade(sym: str, side: int) -> dict:
+def open_trade(sym: str, side: int, lev: float | None = None, margin: float | None = None, tag: str | None = None,
+               _reserved: float = 0.0) -> dict:
     if sym not in SYMBOLS or side not in (1, -1):
         raise ValueError("unknown symbol or side")
     px = last_price(sym)
     if not px:
         raise ValueError(f"no futures price for {sym}")
-    lev, margin = PAPER["lev"], PAPER["margin"]
+    lev, margin = lev or PAPER["lev"], margin or PAPER["margin"]
     notional = margin * lev
     rate = fee_pct(sym, SETTINGS) / 100
     st = state()
-    if st["free"] < margin + rate * notional:
+    if st["free"] - _reserved < margin + rate * notional:
         raise ValueError(f"not enough free paper balance ({st['free']:.2f} USDC)")
     liq = liq_price(px, side, lev, SETTINGS)
     with _db() as con:
-        cur = con.execute("INSERT INTO paper_trades (symbol, side, lev, margin, notional, entry, entry_ts, liq, fee_rate, status)"
-                          " VALUES (?,?,?,?,?,?,?,?,?, 'open')", (sym, side, lev, margin, notional, px, int(time.time()), liq, rate))
+        cur = con.execute("INSERT INTO paper_trades (symbol, side, lev, margin, notional, entry, entry_ts, liq, fee_rate, status, tag)"
+                          " VALUES (?,?,?,?,?,?,?,?,?, 'open', ?)", (sym, side, lev, margin, notional, px, int(time.time()), liq, rate, tag))
         return {"id": cur.lastrowid, "entry": px, "liq": liq}
+
+
+def open_pair(long_sym: str, short_sym: str, lev: float, margin: float) -> list[dict]:
+    """Both legs of a delta pair at once, same leverage and margin; checks the balance for both first."""
+    if long_sym == short_sym:
+        raise ValueError("the two legs must differ")
+    tag = f"pair-{int(time.time())}"
+    need = 2 * margin
+    if state()["free"] < need:
+        raise ValueError(f"not enough free paper balance for both legs ({need:.0f} USDC margin)")
+    first = open_trade(long_sym, 1, lev, margin, tag)
+    try:
+        return [first, open_trade(short_sym, -1, lev, margin, tag)]
+    except ValueError:
+        close_trade(first["id"], reason="pair leg failed")
+        raise
 
 
 def close_trade(tid: int, price: float | None = None, reason: str = "manual") -> dict:

@@ -82,6 +82,22 @@ dashboard as a user service at http://localhost:8050. The first start downloads 
 and Hyperliquid. To bring paper trades and the collected Omni prices along, copy `data/market.sqlite` from the
 old computer before running the script.
 
+## US100 lead (semis and US100)
+
+`backend/lead.py`, tested in `research/us100_lead.py` (Yahoo cache, US cash session, walk-forward, net of costs):
+
+| Idea | Result |
+|---|---|
+| When a big US100 move comes (≥3×ATR in 12 × 5m / ≥1.5×ATR in 3 × 1h) | validated: AUC 0.72 / 0.63; top 20% of readings 88% / 69% vs 27% / 35% |
+| US100 direction (with US30) | coin flip (AUC 0.52) |
+| Weekend: 24/7 perp move since the cash close vs Monday's gap | same sign on 27 of 27 weekends (correlation 0.92) |
+| Monday gap during the day | reverses more than it continues (correlation −0.30); fading big gaps on SOXL +1.24%/trade, range includes zero |
+| Trade SOXL the way US100 just moved | loses: −0.49%/trade (1h), −0.48% (5m). SOXL moves in the same bar (β ≈ 5–6), not after |
+| AMD / NVDA pair (x10, 15 USDC per leg), long the higher β when US100 is bullish | loses: −0.33%/trade (1h), negative even before costs |
+
+The panel shows the big-move meter, the expected gap while the cash market is shut, the SOXL and pair readings
+with these results, and buttons to paper-trade the pair. Settings: `LEAD` in `backend/config.py`.
+
 ## Run
 
 Permanent (systemd user service, restarts on failure, starts at login):

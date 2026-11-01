@@ -20,9 +20,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, pair, paper, prob, stats
-from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, ORACLE_EVERY_S, PAIRS, SETTINGS, SOURCE_LABEL, SYMBOLS,
-                     TRADINGVIEW_SYMBOL)
+from . import data, ict, lead, pair, paper, prob, stats
+from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, LEAD, ORACLE_EVERY_S, PAIRS, SETTINGS, SOURCE_LABEL,
+                     SYMBOLS, TRADINGVIEW_SYMBOL)
 from .portfolio import fee_pct, max_lev
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -66,6 +66,14 @@ def _pair_reports(g: str) -> dict:
 
 def _pair(g: str) -> dict:
     return pair.suggest(PAIRS[g], PAIR_STATE.get(g), LIVE, SETTINGS, _pair_reports(g))
+
+
+def _lead() -> dict | None:
+    try:
+        return lead.snapshot(LIVE)
+    except Exception as e:
+        log.warning("lead: %s", e)
+        return None
 
 
 def _pair_for_group(group: str) -> dict | None:
@@ -193,18 +201,29 @@ async def broadcast(msg: dict) -> None:
             CLIENTS.discard(ws)
 
 
+OMNI_EVERY_S = 6          # normal polling interval; doubles (up to 60 s) while Omni answers 429 Too Many Requests
+
+
 async def omni_loop():
+    wait = OMNI_EVERY_S
     async with httpx.AsyncClient() as client:
         while True:
             try:
                 LIVE.update(await data.fetch_omni(client))
                 META["last_omni"], META["omni_error"] = time.time(), None
+                wait = OMNI_EVERY_S
                 await asyncio.to_thread(data.save_omni_ticks, LIVE, int(time.time()))
                 await broadcast({"type": "live", "live": LIVE, "session_open": data.session_open(), "meta": META})
+            except httpx.HTTPStatusError as e:
+                META["omni_error"] = str(e)[:200]
+                if e.response.status_code == 429:
+                    wait = min(60, wait * 2)
+                else:
+                    log.warning("omni: %s", e)
             except Exception as e:
                 META["omni_error"] = str(e)[:200]
                 log.warning("omni: %s", e)
-            await asyncio.sleep(5)
+            await asyncio.sleep(wait)
 
 
 async def oracle_loop():
@@ -314,6 +333,7 @@ async def lifespan(app):
     except Exception as e:
         log.warning("omni at startup: %s", e)
     _closed_changed()
+    await asyncio.to_thread(lead.fit_models)
     await asyncio.to_thread(recompute)
     tasks = [asyncio.create_task(omni_loop()), asyncio.create_task(candle_loop()), asyncio.create_task(oracle_loop())]
     yield
@@ -423,6 +443,7 @@ def api_state(symbol: str = "NVDA"):
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),
             "omni": {tf: _omni_chart(symbol, tf) for tf in VIEW_TFS},
             "pair": _pair_for_group(group),
+            "lead": _lead() if group in ("semis", "macro") else None,
             "model": {"k_atr": prob.K_ATR, "horizon": prob.HORIZON, "report_time": _report().get("generated")},
             "live": LIVE, "alerts": ALERTS[-40:], "settings": SETTINGS, "meta": META, "paper": paper.state(),
             "session_open": data.session_open()}
@@ -441,6 +462,18 @@ async def api_paper_open(body: dict):
         return JSONResponse({"error": str(e)}, 400)
     st = paper.state()
     await broadcast({"type": "paper", "paper": st, "event": {"kind": "opened", **r}})
+    return st
+
+
+@app.post("/api/paper/open_pair")
+async def api_paper_open_pair(body: dict):
+    try:
+        r = paper.open_pair(str(body.get("long", "")).upper(), str(body.get("short", "")).upper(),
+                            LEAD["pair_lev"], LEAD["pair_margin"])
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, 400)
+    st = paper.state()
+    await broadcast({"type": "paper", "paper": st, "event": {"kind": "opened_pair", "legs": r}})
     return st
 
 

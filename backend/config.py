@@ -88,6 +88,10 @@ ICT_DEFAULTS = {
 # Paper trading on the futures chart: every fictitious trade uses this leverage and margin (USDC).
 PAPER = {"lev": 15, "margin": 12.0}
 
+# US100 as the lead market (backend/lead.py). A "strong" US100 move = |z| ≥ thr of its k-bar 5m return.
+# AMD / NVDA delta pair: pair_lev × pair_margin per leg (x10, 15 USDC → 150 USDC notional each).
+LEAD = {"k": 6, "thr": 1.5, "soxl_beta": 4.8, "pair_lev": 10, "pair_margin": 15.0}
+
 SETTINGS = {
     "capital": 90.0,            # USDC
     "risk_pct": 2.0,            # % of equity lost if the stop is hit (fees included) — position sizing

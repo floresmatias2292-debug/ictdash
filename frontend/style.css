@@ -140,3 +140,16 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .trade .tcfg { width: 100%; font-size: 10px; color: var(--muted); background: var(--pane); border-radius: 3px; padding: 0 4px; opacity: .9; }
 .tbtn.xs { padding: 1px 6px; font-size: 11px; }
 td small { color: var(--muted); font-size: 10px; }
+
+/* US100 lead */
+.lmeter { display: grid; grid-template-columns: 34px 1fr 64px; gap: 8px; align-items: center; margin: 5px 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.lmeter .tf { color: var(--muted); font-weight: 600; }
+.lbar { position: relative; height: 10px; background: var(--chip); border-radius: 5px; overflow: hidden; }
+.lbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--warn); border-radius: 5px; }
+.lbar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--muted); }
+.lmeter.off { opacity: .45; }
+.lsub { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 10px 0 4px; }
+.pairbtns { display: flex; gap: 6px; margin-top: 6px; }
+.pairbtns button { flex: 1; font-size: 11px; padding: 4px 6px; border: 1px solid var(--line); background: var(--pane); color: var(--text); border-radius: 4px; cursor: pointer; }
+.pairbtns button.rec { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.gapbig { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }

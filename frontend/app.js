@@ -337,6 +337,7 @@ function renderPanel() {
     <div class="note">Large chart's timeframe. Regenerate with research/prob_validate.py.</div>` : '<div class="muted">No validation report.</div>';
   renderOracle();
   renderPair();
+  renderLead();
   renderPaper();
   renderAlerts(d.alerts);
 }
@@ -388,7 +389,7 @@ function renderPaper() {
   let upnl = 0;
   const rows = P.open.map((t) => {
     const m = paperMark(t); if (m) upnl += m.net;
-    return `<tr><td class="${t.side === 1 ? 'bull' : 'bear'}">#${t.id} ${t.side === 1 ? 'L' : 'S'} ${t.symbol}</td><td>${fmt(t.entry)}</td><td>${m ? fmt(m.px) : '—'}</td>
+    return `<tr><td class="${t.side === 1 ? 'bull' : 'bear'}">#${t.id} ${t.side === 1 ? 'L' : 'S'} ${t.symbol} <small>x${t.lev}${t.tag ? ' · pair' : ''}</small></td><td>${fmt(t.entry)}</td><td>${m ? fmt(m.px) : '—'}</td>
       <td class="${m && m.net >= 0 ? 'bull' : 'bear'}">${m ? sgn(m.net) : '—'}<br><small>${m ? sgn(m.roe, 1) + '%' : ''}</small></td><td><button class="tbtn xs" data-close="${t.id}">Close</button></td></tr>`;
   }).join('');
   const hist = P.closed.slice(0, 8).map((t) => `<div class="alert"><span class="t">${fmtTime(t.exit_ts)}</span><b>${t.symbol}</b><span class="${t.side === 1 ? 'bull' : 'bear'}">${t.side === 1 ? 'L' : 'S'}</span><span class="muted">${fmt(t.entry)}→${fmt(t.exit)}${t.reason === 'liquidated' ? ' · liq' : ''}</span><span class="${t.pnl >= 0 ? 'bull' : 'bear'}" style="margin-left:auto">${sgn(t.pnl)}</span></div>`).join('');
@@ -400,6 +401,62 @@ function renderPaper() {
     ${hist ? `<div style="margin-top:6px">${hist}</div>` : ''}
     <div class="note">Fictitious: x${cfg.lev}, ${fmt(cfg.margin)} USDC margin per trade, filled at the futures price, taker fee both sides, liquidated at the orange line (margin lost). No funding.</div>`;
   $('#paperBlock').querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => paperClose(Number(b.dataset.close)); });
+}
+
+// ── US100 lead: big-move timing, weekend gap, SOXL and AMD / NVDA readings ─────
+const pct = (x, d = 0) => (x == null ? '—' : `${(x * 100).toFixed(d)}%`);
+function vStats(o) {
+  if (!o || !o.n) return '—';
+  return `${o.n} trades · ${sgn(o.mean_pct)}%/trade${o.ci_pct ? ` (95% ${sgn(o.ci_pct[0])}…${sgn(o.ci_pct[1])})` : ''}`;
+}
+async function paperPair(lng, sht) {
+  const r = await fetch('/api/paper/open_pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ long: lng, short: sht }) });
+  const j = await r.json();
+  if (j.error) { setStatus(false, j.error); return; }
+  S.paper = j; renderPaper();
+}
+function renderLead() {
+  const wrap = $('#leadWrap'), L = S.data?.lead;
+  if (!L) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  const V = L.validation || {};
+  const status = L.session_open ? '<span class="bull">NY cash session open</span>' : L.weekday >= 5 ? '<span class="warn">Weekend: US100 / US30 cash closed</span>' : '<span class="muted">NY cash session closed</span>';
+  // weekend / overnight gap
+  const W = L.weekend, wk = V.weekend || {};
+  const gap = W ? `<div class="lsub">Expected gap at the next open</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="gapbig ${W.gap_pct >= 0 ? 'bull' : 'bear'}">${sgn(W.gap_pct)}%</span><span class="muted">US100 perp ${fmt(W.perp, 0)} vs cash close ${fmt(W.close, 0)}</span></div>
+    <div class="kv"><span>SOXL equivalent (β ${fmt(L.soxl_beta, 1)})</span><span class="${W.soxl_equiv_pct >= 0 ? 'bull' : 'bear'}">${sgn(W.soxl_equiv_pct, 1)}%</span></div>
+    <div class="note">The 24/7 Hyperliquid perp keeps trading while the cash index is shut; its move since the last close matched the sign of Monday's gap on ${wk.perp_weekend ? `${Math.round(wk.perp_weekend.same_sign_pct * wk.perp_weekend.n / 100)} of ${wk.perp_weekend.n}` : 'all tested'} weekends (correlation ${fmt(wk.perp_weekend?.corr_perp_move_vs_gap)}). On Mondays the gap reversed during the day more often than it continued (correlation ${fmt(wk.corr_gap_vs_monday)}); fading big gaps on SOXL: ${vStats(wk.fade_soxl?.big_gaps)}, not proven.</div>` : '';
+  // big-move meter
+  const big = ['5m', '1h'].map((tf) => {
+    const b = L.big?.[tf]; if (!b) return '';
+    const v = V.big_move?.[tf];
+    return `<div class="lmeter ${b.in_session ? '' : 'off'}" title="${v ? `Out of sample: AUC ${v.auc.toFixed(2)}; top 20% of readings → ${v.top20_rate.toFixed(0)}% big moves, bottom 20% → ${v.bottom20_rate.toFixed(0)}%` : ''}"><span class="tf">${tf}</span>
+      <div class="lbar"><i style="width:${b.p * 100}%"></i><b style="left:${b.base * 100}%"></b></div><span><b>${pct(b.p)}</b> <small class="muted">vs ${pct(b.base)}</small></span></div>
+      <div class="pmeta" style="margin:-2px 0 4px 42px">move ≥ ${b.k_atr}×ATR (${fmt(b.move, 0)} pts) within ${b.H} bars${b.in_session ? '' : ' · applies in the cash session'}</div>`;
+  }).join('');
+  // US100 signal → SOXL
+  const sg = L.signal, dirTxt = (d) => (d === 1 ? '<span class="bull">bullish</span>' : d === -1 ? '<span class="bear">bearish</span>' : '<span class="muted">neutral</span>');
+  const soxl = `<div class="lsub">SOXL scalping by US100</div>
+    <div class="kv"><span>US100 ${sg ? `${sg.k}×${sg.tf} move` : 'move'}</span><span>${sg ? `z ${sgn(sg.z)} · ${dirTxt(sg.dir)}` : '—'}</span>
+      <span>Reading for SOXL</span><span>${L.soxl ? `<b class="${L.soxl.dir === 1 ? 'bull' : 'bear'}">${L.soxl.dir === 1 ? 'LONG' : 'SHORT'} SOXL</b>` : `<span class="muted">none (|z| &lt; ${sg?.thr ?? 1.5})</span>`}</span>
+      <span>SOXL moves ≈</span><span>${fmt(L.soxl_beta, 1)} × US100</span></div>
+    <div class="note">Tested: trading SOXL the way US100 just moved lost money (1h: ${vStats(V.soxl?.['1h'])}; 5m: ${vStats(V.soxl?.['5m'])}). SOXL moves with US100 in the same bar, not after it, so US100 does not give an early signal. Use the big-move meter for timing; try ideas with the paper LONG / SHORT buttons on SOXL.</div>`;
+  // AMD / NVDA delta pair
+  const P = L.pair, legs = P.legs;
+  const rec = legs ? `${legs[0].symbol}>${legs[1].symbol}` : '';
+  const pairHtml = `<div class="lsub">AMD / NVDA delta pair · x${P.lev} · ${fmt(P.margin, 0)} USDC per leg</div>
+    <div class="kv"><span>β vs US100 (1h)</span><span>AMD ${fmt(P.beta.AMD)} · NVDA ${fmt(P.beta.NVDA)}</span>
+      ${legs ? `<span>Reading</span><span><b class="bull">LONG ${legs[0].symbol}</b> / <b class="bear">SHORT ${legs[1].symbol}</b></span>
+      ${legs.map((l) => `<span>${l.side === 1 ? 'Long' : 'Short'} ${l.symbol} · ${fmt(P.notional, 0)} USDC</span><span>${fmt(l.price)} · liq ${fmt(l.liq)}</span>`).join('')}
+      <span>Gain per 1% US100 move</span><span>${sgn(P.edge_per_1pct)} USDC</span>` : `<span>Reading</span><span class="muted">waits for a strong US100 move</span>`}</div>
+    <div class="pairbtns"><button data-pair="NVDA>AMD" class="${rec === 'NVDA>AMD' ? 'rec' : ''}">Paper: long NVDA / short AMD</button><button data-pair="AMD>NVDA" class="${rec === 'AMD>NVDA' ? 'rec' : ''}">Paper: long AMD / short NVDA</button></div>
+    <div class="note">Equal notional, so the pair only earns the gap between the two stocks: long the higher-β one when US100 is bullish, the lower-β one when bearish. Tested: 1h ${vStats(V.pair?.['1h'])}; 5m ${vStats(V.pair?.['5m'])}. It lost money even before costs, so treat the reading as an experiment.</div>`;
+  $('#leadBlock').innerHTML = `<div class="qsub" style="margin-bottom:4px">${status}</div>${gap}
+    <div class="lsub">Big move ahead <span class="skill ok" title="Validated out of sample">validated</span></div>${big}
+    <div class="note">Probability that US100 makes a large move soon (bar = chance, tick = average). It says when, not which way: direction tested as a coin flip (AUC ${fmt(V.direction?.['1h']?.auc)}).</div>
+    ${soxl}${pairHtml}`;
+  $('#leadBlock').querySelectorAll('[data-pair]').forEach((b) => { b.onclick = () => { const [a, c] = b.dataset.pair.split('>'); paperPair(a, c); }; });
 }
 
 // ── delta-neutral oil pair (Omni USOIL-SWAP / UKOIL-SWAP) ─────────────────
