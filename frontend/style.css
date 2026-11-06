@@ -174,3 +174,6 @@ tr.home td { font-weight: 600; }
 
 /* MET hedge + bell test */
 .belltest { float: right; display: inline-flex; gap: 4px; text-transform: none; letter-spacing: 0; }
+#alertsBtn.on { background: rgba(8,153,129,.14); color: var(--bull); font-weight: 700; }
+#alertsBtn.arm { background: rgba(247,166,0,.18); color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }

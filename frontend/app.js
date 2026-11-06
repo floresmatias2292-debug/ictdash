@@ -12,7 +12,7 @@ const S = {
   sym: store.get('sym', 'NVDA'), layout: store.get('layout', 'focus'), focus: store.get('focus', '5m'),
   source: store.get('source', 'perp'), detail: store.get('detail', 'clean'), theme: store.get('theme', 'light'),
   show: { ...Object.fromEntries(Object.keys(LAYERS).map((k) => [k, k !== 'mitigated'])), ...store.get('layers', {}) },
-  tz: store.get('tz', 'local'), data: null, live: {}, lastPx: {}, paper: null, sessionOpen: false, panes: {}, seen: null, alertsOn: false, panel: store.get('panel', true),
+  tz: store.get('tz', 'local'), data: null, live: {}, lastPx: {}, paper: null, sessionOpen: false, panes: {}, seen: null, alertsOn: store.get('alertsOn', false), panel: store.get('panel', true),
 };
 if (!TFS.includes(S.focus)) S.focus = '5m';
 
@@ -650,6 +650,12 @@ function renderAlerts(alerts) {
   $('#alertBlock').innerHTML = alerts.length ? alerts.slice().reverse().map((a) => `<div class="alert ${a.type}"><span class="t">${fmtTime(a.ts)}</span><b>${a.symbol}</b><span class="muted">${a.tf}</span><span class="${a.dir === 1 ? 'bull' : 'bear'}">${a.text}</span></div>`).join('') : '<div class="muted">No alerts on the latest bars.</div>';
 }
 let audio = null;
+function soundUI() {
+  const b = $('#alertsBtn'), armed = audio && audio.state === 'running';
+  b.classList.toggle('on', S.alertsOn); b.classList.toggle('arm', S.alertsOn && !armed);
+  b.textContent = S.alertsOn ? (armed ? '🔔 ON' : '🔔 click page') : '🔕 OFF';
+  b.title = S.alertsOn ? (armed ? 'Sound on: 1 bell = LONG, 2 bells = SHORT. Click to turn off.' : 'Sound on, but the browser needs one click on the page first.') : 'Sound off. Click to turn on bells (1 = LONG, 2 = SHORT).';
+}
 // Church-bell strike: inharmonic partials with long decays. One strike = big LONG move, two = big SHORT.
 function bell(times = 1) {
   audio = audio || new (window.AudioContext || window.webkitAudioContext)();
@@ -666,9 +672,11 @@ function bell(times = 1) {
     }
   }
 }
+// Directional alerts ring the bell: one strike = LONG, two = SHORT.
+const BELL_TYPES = new Set(['signal', 'bigmove', 'hedge', 'pair']);
 function notify(a) {
   if (!S.alertsOn) return;
-  if (a.type === 'bigmove' || a.type === 'hedge') bell(a.dir === 1 ? 1 : 2);
+  if (BELL_TYPES.has(a.type) && (a.dir === 1 || a.dir === -1)) bell(a.dir === 1 ? 1 : 2);
   else if (audio) { const o = audio.createOscillator(), g = audio.createGain(); o.frequency.value = a.type === 'signal' ? 880 : 620; o.connect(g); g.connect(audio.destination); g.gain.setValueAtTime(0.15, audio.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.3); o.start(); o.stop(audio.currentTime + 0.3); }
   if ('Notification' in window && Notification.permission === 'granted') new Notification(`${a.symbol} ${a.tf} — ${a.type}`, { body: a.text, tag: a.id });
 }
@@ -814,8 +822,13 @@ function wire() {
   $('#alertsBtn').onclick = async () => {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
     if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
-    S.alertsOn = !S.alertsOn; $('#alertsBtn').classList.toggle('on', S.alertsOn);
+    S.alertsOn = !S.alertsOn; store.set('alertsOn', S.alertsOn); soundUI();
+    if (S.alertsOn) { if (audio.state === 'suspended') await audio.resume(); bell(1); }   // confirms the speakers work
   };
+  soundUI();
+  // Browsers only allow sound after a click on the page: arm the audio on the first click / key press.
+  const arm = () => { if (!S.alertsOn) return; audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); soundUI(); };
+  document.addEventListener('pointerdown', arm); document.addEventListener('keydown', arm);
   $('#bellLong').onclick = () => bell(1);
   $('#bellShort').onclick = () => bell(2);
   $('#settingsBtn').onclick = () => {
