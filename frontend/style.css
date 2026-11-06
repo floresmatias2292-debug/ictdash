@@ -171,3 +171,6 @@ code { font-size: 11px; background: var(--chip); padding: 0 3px; border-radius: 
 .lspark { width: 100%; height: 60px; margin-top: 8px; display: block; }
 .lspark .zero { stroke: var(--line); stroke-dasharray: 3 3; }
 tr.home td { font-weight: 600; }
+
+/* MET hedge + bell test */
+.belltest { float: right; display: inline-flex; gap: 4px; text-transform: none; letter-spacing: 0; }

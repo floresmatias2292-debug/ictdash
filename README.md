@@ -22,33 +22,38 @@ Long/short probability (`backend/prob.py`): P(price hits +1×ATR before −1×AT
 state carries no directional edge, so the model is heavily regularized and keeps probabilities near 50%. The dashboard
 shows that skill next to every probability; a signal appears only if a probability crosses the threshold (60%).
 
-## Oil strategy (WTI / Brent)
+## MET (Meteora) stake hedge
 
-- **Direction (CL, BZ):** Binance TradFi perps CLUSDT (WTI) and BZUSDT (Brent), history since 1 Apr 2026,
-  with the same FVG-ICT charts and long/short probability as the other groups. Omni CL-PERP / BZ-PERP give
-  the live mark.
-- **Delta-neutral pair (USOIL-SWAP / UKOIL-SWAP on Omni):** long one benchmark and short the other, with the
-  Brent leg sized at the hedge ratio β, so a move in the oil price cancels out. A setup appears when the
-  hedged spread `log(WTI) − β·log(Brent)` is more than 2 standard deviations from its 192-hour mean. It is
-  sized so a stop-out loses `risk_pct` of capital. The panel also shows the daily funding carry of each
-  orientation at today's Omni rates. The spread statistics come from the Binance perps (no free swap history).
-- **Validation (walk-forward, out of sample, net of costs):**
-  - CL/BZ probability: AUC 0.52 / 0.51 / 0.49 on 5m / 15m / 1h, i.e. no edge.
-  - Pair, fading the spread: 59 trades, 41% hit, −0.15% per trade (loses).
-  - Pair, following the stretch: 28 trades, +0.12% per trade, but its 95% range (−0.29%…+0.63%) includes
-    zero, so neither is a proven edge.
+- **Chart:** Hyperliquid MET perp (main dex, 1h history since Apr 2026, 4h since the Oct 2025 listing) with
+  the FVG-ICT engine; Omni METEORA-PERP gives the live mark, funding and the hedge price.
+- **Panel "MET stake hedge"** (Settings ⚙: `MET staked (tokens)`, `hedge size %`, `leverage` ≤ x3):
+  1. *Static hedge*: short the staked amount all the time → price exposure ≈ 0, you keep the staking yield.
+     Shows the order, notional, margin, liquidation price of the short and Omni funding per day.
+  2. *4h hedge*: short only while the 4h structure is bearish; an alert + double bell when it turns.
+- **Backtest** (`research/met_hedge.py`, 1 staked MET, net of fee + spread + slippage per switch and the real
+  hourly Hyperliquid funding; staking yield not modelled):
 
-  Rerun with:
+  | 4h bars, Oct 2025 – Nov 2026 | Final | Worst drop | Switches |
+  |---|---|---|---|
+  | Stake only | −83% | −94% | 0 |
+  | Static hedge | +0.6% | −0.8% | 1 |
+  | 4h-structure hedge | −25% | −38% | 56 |
 
-  ```bash
-  .venv/bin/python -W ignore research/pair_validate.py revert oil
-  .venv/bin/python -W ignore research/pair_validate.py trend oil
-  .venv/bin/python -W ignore research/prob_validate.py oil
-  ```
+  On 1h bars (Apr – Nov 2026, MET +103%) the 1h-structure hedge lost (−10%, 120 switches, worst drop −71%),
+  so the 1h / 5m readings are shown only as early warnings. One token and one year: the 4h hedge is a
+  trade-off, not a proven edge.
+- If MET rises the short loses what the locked stake gains: keep spare USDC for margin. No orders are placed.
+
+## Big-move bells
+
+The forming 5m or 1h candle body reaching `big_move_atr` × ATR (Settings, default 2, 0 = off) raises an
+alert on any market: **one bell** for a big LONG move, **two bells** for a big SHORT move. The MET hedge
+turning on / off rings two / one bell too. Turn sound on with 🔔 in the toolbar; test with the buttons in
+the Alerts panel.
 
 ## US100 / US30 pair (delta scalping check)
 
-- Omni US100-SWAP / US30-SWAP, beta-hedged like the oil pair. No free source has US30 candles, so the live
+- Omni US100-SWAP / US30-SWAP, beta-hedged. No free source has US30 candles, so the live
   spread is built from the Omni marks (5 s ticks → 5m bars). It shows "collecting" until 106 bars of a
   moving market have been recorded without gaps.
 - Validated on the old Yahoo cache (`data/bars.sqlite`, US cash session), walk-forward, net of costs:

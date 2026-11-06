@@ -27,7 +27,7 @@ from backend import data, pair, stats  # noqa: E402
 from backend.config import PAIRS, SETTINGS  # noqa: E402
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "revert"      # "revert" (classic pair) or "trend"
-GROUP = sys.argv[2] if len(sys.argv) > 2 else "oil"         # key of PAIRS
+GROUP = sys.argv[2] if len(sys.argv) > 2 else "index"         # key of PAIRS
 TF_ARG = sys.argv[3] if len(sys.argv) > 3 else None         # optional: validate a single timeframe
 # windows in bars per timeframe. The index history is the US cash session only (78 × 5m or 7 × 1h bars a day).
 WINDOWS = {"oil": {"15m": [96, 192, 384], "1h": [96, 192, 384]},

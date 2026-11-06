@@ -21,7 +21,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, lead, loris, pair, paper, prob, social, stats
+from . import data, hedge, ict, lead, loris, pair, paper, prob, social, stats
 from .config import (BINANCE_FAPI, FRONTEND_DIR, GROUPS, ICT_DEFAULTS, LEAD, ORACLE_EVERY_S, PAIRS, SETTINGS,
                      SOURCE_LABEL, SYMBOLS, TRADINGVIEW_SYMBOL, use_hyperliquid_for_binance)
 from .portfolio import fee_pct, max_lev
@@ -177,6 +177,14 @@ def _collect_alerts() -> None:
         if sg.get("side"):
             _push(seen, sym, tf, "signal", sg["side"],
                   f"{'LONG' if sg['side'] == 1 else 'SHORT'} {max(sg['p_long'], sg['p_short']):.0f}%", int(ts[last]))
+    # MET stake hedge: the 4h structure turning bearish = put the short on; bullish = take it off
+    h = hedge.snapshot(STATE, LIVE, SETTINGS)
+    if h and h["trend_4h"] in (1, -1) and h["trend_4h_since"]:
+        on = h["trend_4h"] == -1
+        size = f" {h['short_tokens']:,.0f} MET" if h["short_tokens"] else ""
+        _push(seen, "MET", "4h", "hedge", -1 if on else 1,
+              f"Hedge ON: short{size} (4h structure bearish)" if on else "Hedge OFF: close the short (4h structure bullish)",
+              h["trend_4h_since"])
     for g, cfg in PAIRS.items():
         sp = _pair(g).get("setup")
         if sp:
@@ -185,6 +193,32 @@ def _collect_alerts() -> None:
                   f"{'LONG' if a['side'] == 1 else 'SHORT'} {a['leg']} / {'LONG' if b['side'] == 1 else 'SHORT'} {b['leg']} · z {sp['z']:+.2f}",
                   PAIR_STATE[g].get("ts", 0))
     del ALERTS[:-100]
+
+
+def _big_moves(updates: dict) -> list[dict]:
+    """Forming 5m / 1h candle whose body reaches big_move_atr × ATR: one alert per bar and direction."""
+    k = SETTINGS.get("big_move_atr") or 0
+    if k <= 0:
+        return []
+    seen, new = {a["id"] for a in ALERTS}, []
+    for sym, per in updates.items():
+        for tf in ("5m", "1h"):
+            st, rows = STATE.get((sym, tf)), per.get(tf)
+            if not st or not rows:
+                continue
+            atr = float(st["res"]["atr"][-1])
+            c = rows[-1]
+            body = c["close"] - c["open"]
+            if not atr or abs(body) < k * atr:
+                continue
+            d = 1 if body > 0 else -1
+            n = len(ALERTS)
+            _push(seen, sym, tf, "bigmove", d,
+                  f"Big {'LONG' if d == 1 else 'SHORT'} move {body / atr:+.1f}×ATR ({body / c['open'] * 100:+.2f}%)",
+                  int(time.time()) // (300 if tf == "5m" else 3600) * (300 if tf == "5m" else 3600))
+            if len(ALERTS) > n:
+                new.append(ALERTS[-1])
+    return new
 
 
 def _push(seen, sym, tf, kind, d, text, ts):
@@ -286,6 +320,9 @@ async def candle_loop():
                 if updates:
                     META["candle_error"] = None
                 await broadcast({"type": "candles", "candles": updates, "meta": META})
+                if _big_moves(updates):
+                    del ALERTS[:-100]
+                    await broadcast({"type": "alerts", "alerts": ALERTS[-40:]})
                 if _closed_changed() and not _recalc_lock.locked():
                     asyncio.create_task(_recalc())
             except Exception as e:
@@ -519,6 +556,7 @@ def api_state(symbol: str = "NVDA"):
             "charts": {tf: _chart(symbol, tf) for tf in VIEW_TFS},
             "oracle": ORACLE.get(symbol, {}),
             "social": social.summary(symbol),
+            "hedge": hedge.snapshot(STATE, LIVE, SETTINGS) if symbol == "MET" else None,
             "loris": LORIS.get(symbol), "loris_hist": loris.history(symbol), "loris_key": bool(loris.api_key()),
             "oracle_hist": [[_et(t), i, v] for t, i, v in data.load_oracle(symbol)],
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),

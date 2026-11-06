@@ -267,7 +267,7 @@ async def fetch_venue_index(client: httpx.AsyncClient, symbol: str) -> dict | No
         r.raise_for_status()
         j = r.json()
         return {"index": float(j["indexPrice"]), "mark": float(j["markPrice"]), "funding": float(j["lastFundingRate"])}
-    dex = meta["ticker"].split(":")[0]
+    dex = meta["ticker"].split(":")[0] if ":" in meta["ticker"] else ""      # "" = Hyperliquid main dex (MET)
     r = await client.post(HYPERLIQUID_INFO, json={"type": "metaAndAssetCtxs", "dex": dex}, timeout=10)
     r.raise_for_status()
     m, ctx = r.json()

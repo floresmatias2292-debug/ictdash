@@ -17,7 +17,7 @@ const S = {
 if (!TFS.includes(S.focus)) S.focus = '5m';
 
 const $ = (s, r = document) => r.querySelector(s);
-const fmt = (x, d = 2) => (x == null || isNaN(x) ? '—' : Number(x).toFixed(d));
+const fmt = (x, d) => (x == null || isNaN(x) ? '—' : Number(x).toFixed(d ?? (x !== 0 && Math.abs(x) < 1 ? 4 : 2)));   // small prices (MET) get 4 decimals
 const sgn = (x, d = 2) => (x == null || isNaN(x) ? '—' : `${x >= 0 ? '+' : ''}${Number(x).toFixed(d)}`);
 const vol = (v) => (v == null ? '—' : v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : String(Math.round(v)));
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -197,6 +197,8 @@ function renderChart(tf) {
   const { bars, overlayData, omni } = seriesFor(tf);
   p.bars = bars;
   const range = p.fitted ? p.chart.timeScale().getVisibleLogicalRange() : null;
+  const ref = bars.length ? Math.abs(bars[bars.length - 1].close) : 100, prec = ref < 1 ? 4 : ref < 10 ? 3 : 2;
+  p.candles.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: 10 ** -prec } });
   p.candles.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
   p.volume.setData(S.show.volume && !omni ? bars.map((b) => ({ time: b.time, value: b.volume || 0, color: b.close >= b.open ? 'rgba(8,153,129,0.45)' : 'rgba(242,54,69,0.45)' })) : []);
   p.overlay.setItems(overlayData ? buildOverlay(overlayData, tf) : omni ? yahooZonesOnOmni(tf) : []);
@@ -342,6 +344,7 @@ function renderPanel() {
     <table style="margin-top:6px"><tr><th>Predicted</th><th>n</th><th>Avg pred</th><th>Actual up</th></tr>${sk.calibration.map((b) => `<tr><td>${b.bin}</td><td>${b.n}</td><td>${(b.pred * 100).toFixed(0)}%</td><td>${(b.actual * 100).toFixed(0)}%</td></tr>`).join('')}</table>
     <div class="note">Large chart's timeframe. Regenerate with research/prob_validate.py.</div>` : '<div class="muted">No validation report.</div>';
   renderOracle();
+  renderHedge();
   renderPair();
   renderLead();
   renderPaper();
@@ -535,6 +538,48 @@ function renderPair() {
       <span>Carry long ${B} / short ${A}</span><span class="${c1['-1'] >= 0 ? 'bull' : 'bear'}">${sgn(c1['-1'])} USDC/day per 1k</span></div>
     ${pairValidation(pr)}`;
 }
+// ── MET stake hedge ─────────────────────────────────────────────────────────
+function hedgeCurve(run) {
+  const keys = [['none', 'Stake only', 'var(--muted)'], ['static', 'Static hedge', 'var(--accent)'], ['trend_4h', '4h hedge', '#f7a600']];
+  const lines = keys.filter(([k]) => run?.variants?.[k]?.curve?.length > 1);
+  if (!lines.length) return '';
+  const all = lines.flatMap(([k]) => run.variants[k].curve), t0 = all[0][0], t1 = Math.max(...all.map((p) => p[0]));
+  const lo = Math.min(...all.map((p) => Math.log(p[1]))), hi = Math.max(...all.map((p) => Math.log(p[1])));
+  const W = 300, H = 70, x = (t) => (t - t0) / Math.max(1, t1 - t0) * W, y = (v) => H - (Math.log(v) - lo) / Math.max(1e-9, hi - lo) * (H - 4) - 2;
+  return `<svg class="lspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Value of 1 staked MET with and without hedge"><line x1="0" x2="${W}" y1="${y(1)}" y2="${y(1)}" class="zero"/>${lines.map(([k, , c]) => `<polyline fill="none" stroke="${c}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${run.variants[k].curve.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"/>`).join('')}</svg>
+    <div class="note">${lines.map(([, l, c]) => `<span style="color:${c}">■</span> ${l}`).join(' · ')} — value of 1 staked MET, ${fmtTime(run.from)} → ${fmtTime(run.to)} (log scale)</div>`;
+}
+function renderHedge() {
+  const wrap = $('#hedgeWrap'), H = S.data?.hedge;
+  wrap.classList.toggle('hidden', !H);
+  if (!H) return;
+  const px = H.price, f4 = (x) => fmt(x, 4), tok = (x) => Number(x || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const dirTxt = (t) => (t === 1 ? '<span class="bull">▲ bullish</span>' : t === -1 ? '<span class="bear">▼ bearish</span>' : '<span class="muted">—</span>');
+  const on = H.dynamic.on;
+  const head = H.tokens > 0
+    ? `<div class="kv"><span>Staked</span><span><b>${tok(H.tokens)} MET</b> ≈ ${fmt(H.stake_usd)} USD</span><span>MET (${H.price_src})</span><span>${f4(px)}</span></div>`
+    : `<div class="warn">Set how many MET you have staked: Settings ⚙ → "MET staked (tokens)".</div><div class="kv"><span>MET (${H.price_src})</span><span>${f4(px)}</span></div>`;
+  const order = (n) => n > 0 ? `<b class="bear">SHORT ${tok(n)} MET</b> on ${esc(H.omni)}` : '<span class="muted">set your stake first</span>';
+  const run4 = H.report?.runs?.['4h'], v = run4?.variants || {};
+  const row = (k, l) => v[k] ? `<tr><td>${l}</td><td class="${v[k].final_pct >= 0 ? 'bull' : 'bear'}">${sgn(v[k].final_pct, 0)}%</td><td class="bear">${sgn(v[k].max_dd_pct, 0)}%</td><td>${v[k].switches}</td></tr>` : '';
+  $('#hedgeBlock').innerHTML = `${head}
+    <div class="lsub">1 · Static hedge (full protection)</div>
+    <div class="kv"><span>Order</span><span>${order(H.short_tokens)}</span>
+      <span>Notional · margin</span><span>${fmt(H.notional)} · ${fmt(H.margin)} USDC at x${H.lev}</span>
+      <span>Short liquidation</span><span class="warn">${f4(H.liq)} (MET ${sgn(H.liq_up_pct, 0)}%)</span>
+      <span>Funding (Omni, short)</span><span class="${(H.funding_day ?? 0) >= 0 ? 'bull' : 'bear'}">${H.funding_annual == null ? '—' : `${sgn(H.funding_annual * 100, 1)}%/yr · ${sgn(H.funding_day)} USDC/day`}</span>
+      <span>Cost to open</span><span>≈ ${fmt(H.fee_open)} USDC</span></div>
+    <div class="lsub">2 · Hedge only when the chart turns down (4h)</div>
+    <div class="sig ${on ? 'bear' : 'bull'}">${on ? `HEDGE ON · ${H.short_tokens ? `short ${tok(H.short_tokens)} MET` : 'short'}` : 'HEDGE OFF · no short'}</div>
+    <div class="kv"><span>4h structure</span><span>${dirTxt(H.trend_4h)}${H.trend_4h_since ? ` since ${fmtTime(H.trend_4h_since)}` : ''}</span>
+      <span>1h structure (early)</span><span>${dirTxt(H.trend_1h)}</span><span>5m last CHoCH</span><span>${dirTxt(H.shift_5m)}</span></div>
+    <div class="note">The short goes on when a 4h candle closes with the structure bearish and comes off when it turns bullish. You get an alert and a double bell 🔔🔔 at that moment (turn on 🔔 at the top). The 1h and 5m lines warn earlier but flipped too often to trade.</div>
+    ${run4 ? `<details style="margin-top:6px"><summary class="ptitle">Backtest: 1 staked MET</summary>
+      <table style="margin-top:6px"><tr><th>Variant</th><th>Final</th><th>Worst drop</th><th>Switches</th></tr>${row('none', 'Stake only')}${row('static', 'Static hedge')}${row('trend_4h', '4h hedge')}</table>
+      ${hedgeCurve(run4)}
+      <div class="note">Hyperliquid MET 4h bars, net of fee + spread + slippage per switch and the real hourly funding. Staking yield not included (same for all). A small sample (one token, one year): the static hedge is the only one that removes the risk; the 4h hedge is a trade-off, not a proven edge. Rerun: research/met_hedge.py.</div></details>` : ''}
+    <div class="note">If MET rises, the short loses what the stake gains, but the stake is locked: keep spare USDC to add margin before the liquidation price. The dashboard does not place orders; enter the short on Omni yourself.</div>`;
+}
 // ── Loris Tools funding ────────────────────────────────────────────────────
 function lorisSpark(hist) {
   const lines = Object.entries(hist || {}).filter(([, pts]) => pts.length > 1);
@@ -605,9 +650,26 @@ function renderAlerts(alerts) {
   $('#alertBlock').innerHTML = alerts.length ? alerts.slice().reverse().map((a) => `<div class="alert ${a.type}"><span class="t">${fmtTime(a.ts)}</span><b>${a.symbol}</b><span class="muted">${a.tf}</span><span class="${a.dir === 1 ? 'bull' : 'bear'}">${a.text}</span></div>`).join('') : '<div class="muted">No alerts on the latest bars.</div>';
 }
 let audio = null;
+// Church-bell strike: inharmonic partials with long decays. One strike = big LONG move, two = big SHORT.
+function bell(times = 1) {
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  if (audio.state === 'suspended') audio.resume();
+  const partials = [[0.5, 0.35, 2.6], [1, 0.5, 2.2], [1.19, 0.25, 1.6], [1.56, 0.18, 1.3], [2, 0.22, 1.1], [2.74, 0.1, 0.8], [3, 0.08, 0.7], [4.07, 0.05, 0.5]];
+  const base = 660, out = audio.createGain(); out.gain.value = 0.35; out.connect(audio.destination);
+  for (let k = 0; k < times; k++) {
+    const t0 = audio.currentTime + 0.05 + k * 0.9;
+    for (const [ratio, amp, dec] of partials) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.type = 'sine'; o.frequency.value = base * ratio;
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(amp, t0 + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dec);
+      o.connect(g); g.connect(out); o.start(t0); o.stop(t0 + dec + 0.05);
+    }
+  }
+}
 function notify(a) {
   if (!S.alertsOn) return;
-  if (audio) { const o = audio.createOscillator(), g = audio.createGain(); o.frequency.value = a.type === 'signal' ? 880 : 620; o.connect(g); g.connect(audio.destination); g.gain.setValueAtTime(0.15, audio.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.3); o.start(); o.stop(audio.currentTime + 0.3); }
+  if (a.type === 'bigmove' || a.type === 'hedge') bell(a.dir === 1 ? 1 : 2);
+  else if (audio) { const o = audio.createOscillator(), g = audio.createGain(); o.frequency.value = a.type === 'signal' ? 880 : 620; o.connect(g); g.connect(audio.destination); g.gain.setValueAtTime(0.15, audio.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.3); o.start(); o.stop(audio.currentTime + 0.3); }
   if ('Notification' in window && Notification.permission === 'granted') new Notification(`${a.symbol} ${a.tf} — ${a.type}`, { body: a.text, tag: a.id });
 }
 
@@ -691,6 +753,9 @@ function connect() {
       renderOracle();
     } else if (m.type === 'paper') {
       S.paper = m.paper; renderPaper(); paperEvent(m.event);
+    } else if (m.type === 'alerts') {
+      if (!S.data) return;
+      S.data.alerts = m.alerts; renderAlerts(m.alerts);
     } else if (m.type === 'loris') {
       if (!S.data) return;
       S.data.loris = m.loris[S.sym] || null; S.data.meta = m.meta; renderLoris();
@@ -730,7 +795,9 @@ function buildLayers() {
 }
 const FIELDS = [['capital', 'Capital (USDC)'], ['risk_pct', 'Risk per trade (% to stop)'], ['margin_pct', 'Max margin (% of capital)'], ['signal_prob', 'Signal threshold (%)'],
   ['fee_pct', 'Perp fee per side (%)'], ['swap_fee_pct', 'Swap fee per side (%)'], ['slippage_pct', 'Slippage per side (%)'], ['mmr_pct', 'Maintenance margin (%)'],
-  ['liq_buffer', 'Stop / liquidation buffer (0–1)'], ['swap_max_lev', 'Swap max leverage']];
+  ['liq_buffer', 'Stop / liquidation buffer (0–1)'], ['swap_max_lev', 'Swap max leverage'],
+  ['met_staked', 'MET staked (tokens)'], ['met_hedge_pct', 'MET hedge size (% of stake)'], ['met_hedge_lev', 'MET hedge leverage (max 3)'],
+  ['big_move_atr', 'Bell: big move (× ATR, 0 = off)']];
 function wire() {
   segment('#source', 'source', 's', () => { for (const p of Object.values(S.panes)) p.fitted = false; renderAll(); });
   segment('#detail', 'detail', 'd', renderAll);
@@ -749,6 +816,8 @@ function wire() {
     if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
     S.alertsOn = !S.alertsOn; $('#alertsBtn').classList.toggle('on', S.alertsOn);
   };
+  $('#bellLong').onclick = () => bell(1);
+  $('#bellShort').onclick = () => bell(2);
   $('#settingsBtn').onclick = () => {
     const st = S.data.settings;
     $('#settingsGrid').innerHTML = FIELDS.map(([k, l]) => `<label>${l}<input type="number" step="any" min="0" name="${k}" value="${st[k]}"></label>`).join('');

@@ -14,10 +14,9 @@ SYMBOLS = {
     "NVDA":  {"source": "binance",     "ticker": "NVDAUSDT",  "hl_ticker": "xyz:NVDA",   "omni": "NVDA-PERP",  "max_lev": 20, "group": "semis", "kind": "perp", "spread_bps": 5.0},
     "SOXL":  {"source": "binance",     "ticker": "SOXLUSDT",  "hl_ticker": "xyz:SOXL",   "omni": "SOXL-PERP",  "max_lev": 15, "group": "semis", "kind": "perp", "spread_bps": 5.0},
     "US100": {"source": "hyperliquid", "ticker": "xyz:XYZ100", "omni": "US100-SWAP", "max_lev": 20, "group": "macro", "kind": "swap", "spread_bps": 2.0},
-    # Oil: Binance TradFi perps (WTI = CL, Brent = BZ) for direction; Omni CL-PERP / BZ-PERP for the live mark.
-    # Omni does not publish a leverage cap for these; 20 assumed (Hyperliquid xyz:CL / xyz:BRENTOIL allow 20).
-    "CL":    {"source": "binance",     "ticker": "CLUSDT",     "omni": "CL-PERP",    "max_lev": 20, "group": "oil",   "kind": "perp", "spread_bps": 5.0},
-    "BZ":    {"source": "binance",     "ticker": "BZUSDT",     "omni": "BZ-PERP",    "max_lev": 20, "group": "oil",   "kind": "perp", "spread_bps": 5.0},
+    # Meteora (MET): Hyperliquid main-dex perp for candles (the free source with history); Omni METEORA-PERP for
+    # the live mark and the hedge sizing. Hyperliquid caps MET at x3; Omni publishes no cap, so x3 is assumed.
+    "MET":   {"source": "hyperliquid", "ticker": "MET",        "omni": "METEORA-PERP", "max_lev": 3, "group": "crypto", "kind": "perp", "spread_bps": 15.0},
 }
 SOURCE_LABEL = {"binance": "Binance", "hyperliquid": "Hyperliquid"}
 
@@ -39,11 +38,11 @@ def use_hyperliquid_for_binance() -> list[str]:
 COINGECKO_DERIVATIVES = "https://api.coingecko.com/api/v3/derivatives"
 ORACLE_ALIASES = {"NVDA": ["NVDA"], "AMD": ["AMD"], "SOXL": ["SOXL"],
                   "US100": ["XYZ100", "US100", "NAS100", "NDX100", "USTECH100"],
-                  "CL": ["CL", "WTI", "USOIL"], "BZ": ["BZ", "BRENT", "BRENTOIL", "UKOIL"]}
+                  "MET": ["MET", "METEORA"]}
 ORACLE_EVERY_S = 120          # the CoinGecko payload is ~9 MB, so not more often than every 2 minutes
 # TradingView embeddable widget symbols (reference view only — TradingView has no data API).
 TRADINGVIEW_SYMBOL = {"NVDA": "BINANCE:NVDAUSDT.P", "AMD": "BINANCE:AMDUSDT.P", "SOXL": "BINANCE:SOXLUSDT.P",
-                      "US100": "PEPPERSTONE:NAS100", "CL": "TVC:USOIL", "BZ": "TVC:UKOIL"}
+                      "US100": "PEPPERSTONE:NAS100", "MET": "BYBIT:METUSDT.P"}
 
 # X (Twitter) searches per symbol (backend/social.py). Cashtag, the Binance perp ticker, Omni's market name and
 # "perp" phrases; retweets are dropped by the provider filter. Edit freely (X API limit: 512 characters).
@@ -58,16 +57,13 @@ GROUPS = {
               "sector": ["AMD", "NVDA", "SOXL"], "fee_key": "fee_pct"},
     "macro": {"label": "Index · Hyperliquid", "symbols": ["US100"], "pair": ("US100", "US100"), "hedge": "US100",
               "sector": ["US100"], "fee_key": "swap_fee_pct"},
-    "oil":   {"label": "Oil · Binance", "symbols": ["CL", "BZ"], "pair": ("CL", "BZ"), "hedge": "BZ",
-              "sector": ["CL", "BZ"], "fee_key": "fee_pct"},
+    "crypto": {"label": "Crypto · Hyperliquid", "symbols": ["MET"], "pair": ("MET", "MET"), "hedge": "MET",
+               "sector": ["MET"], "fee_key": "fee_pct"},
 }
 
 # Delta-neutral pair on Omni swaps. The swaps have no free candle history, so the spread statistics come
 # from the Binance perps on the same underlying ("proxy"); entries are priced at the live Omni marks.
 PAIRS = {
-    "oil": {"label": "WTI / Brent · Omni swaps", "group": "oil", "a": "USOIL", "b": "UKOIL",
-            "omni": {"USOIL": "USOIL-SWAP", "UKOIL": "UKOIL-SWAP"}, "proxy": {"USOIL": "CL", "UKOIL": "BZ"},
-            "fee_key": "swap_fee_pct", "spread_bps": 0.4, "history": "binance"},
     # US100 / US30 on Omni swaps. No free US30 candles exist (Binance / Hyperliquid list no Dow), so the live
     # spread is built from the Omni marks (5 s ticks → 5m buckets) and the validation uses the old Yahoo cache
     # (cash session, data/bars.sqlite).
@@ -137,4 +133,9 @@ SETTINGS = {
     "late_only_1h": 1,          # 1h: only setups whose bar closes at/after 14:00 ET (1 = on)
     "min_samples": 20,          # resolved setups needed before a bucket's own win-rate is trusted
     "beta_lookback_bars": 390,  # 1h bars (~60 sessions) for AMD/NVDA vs SOXL beta
+    # MET stake hedge (backend/hedge.py) and big-move bells
+    "met_staked": 0.0,          # MET tokens you have staked on Meteora
+    "met_hedge_pct": 100.0,     # % of the staked tokens to short when hedging
+    "met_hedge_lev": 2.0,       # leverage of the hedge short (MET max x3)
+    "big_move_atr": 2.0,        # bell when the forming 5m / 1h candle body reaches this many ATR
 }
