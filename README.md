@@ -100,19 +100,59 @@ with these results, and buttons to paper-trade the pair. Settings: `LEAD` in `ba
 
 ## Run
 
-Permanent (systemd user service, restarts on failure, starts at login):
+Needs **Python 3.12+** (numpy 2.5 / pandas 3.1). On any computer (Linux, macOS, Windows):
 
 ```bash
-cp deploy/ictdash.service ~/.config/systemd/user/ && systemctl --user daemon-reload
-systemctl --user enable --now ictdash.service     # http://localhost:8050
+git clone https://github.com/floresmatias2292-debug/ictdash.git && cd ictdash
+./run.sh              # Linux/macOS   (Windows: double-click run.bat, or  py start.py)
+```
+
+`start.py` creates `.venv` on first run, rebuilds it if it was copied from another computer, reinstalls
+dependencies when `requirements.txt` changes, then serves http://localhost:8050. Do not copy `.venv` or `data/`
+between computers; `data/market.sqlite` is backfilled from Binance / Hyperliquid on the first start.
+
+Permanent on Linux (systemd user service for whatever folder the project is in):
+
+```bash
+deploy/install-service.sh                          # http://localhost:8050
 systemctl --user status ictdash.service           # state
 journalctl --user -u ictdash.service -f           # live logs
 systemctl --user restart ictdash.service          # after code changes
 ```
 
-Manual: `./run.sh`. The first start backfills Binance (from each listing) and Hyperliquid (newest 5000 candles)
-into `data/market.sqlite`; later starts fetch only the missing bars. Python deps: pandas numpy fastapi uvicorn httpx
-in `.venv` (recreate it if the folder is moved).
+Where Binance futures are blocked (HTTP 451, e.g. US servers) the dashboard charts AMD / NVDA / SOXL from
+Hyperliquid xyz (xyz:AMD, xyz:NVDA, xyz:SOXL) automatically; force it with `CHART_SOURCE=hyperliquid` or `binance` in `.env`.
+
+If it fails: `python3 --version` must be 3.12+; on Ubuntu/Debian `sudo apt install python3.12 python3.12-venv`;
+port in use → `PORT=8060 ./run.sh`.
+
+## Funding by venue (Loris Tools)
+
+Side panel "Funding · Loris Tools": the live funding rate of every venue listing the perp (Omni/Variational, Binance,
+Hyperliquid xyz, Lighter, Ostium …) from [loris.tools](https://loris.tools) `GET /funding`, 8 h-normalized bps and APR,
+the cross-venue median, the cheapest venue to be long / best to be short and their spread, plus a 72 h history line
+built from our own reads (table `loris_funding`). Read every `LORIS_POLL_SEC` (60 s).
+
+Setup: `LORIS_API_KEY=...` in `.env`, restart. The free plan returns BTC and ETH only, so NVDA / AMD need a paid plan.
+Check the key and the symbol / venue names: `.venv/bin/python -m backend.loris` (raw reply in `data/loris_last.json`).
+
+## X (Twitter) feed for AMD / NVDA perps
+
+Side panel "X · Twitter": tweets about the perp ($AMD / $NVDA cashtags, Binance AMDUSDT / NVDAUSDT, Omni AMD-PERP /
+NVDA-PERP, "perp" phrases), buzz (tweets in the last hour vs the 24 h pace), bullish / bearish sentiment (EN + ES word
+list weighted by followers and engagement), share mentioning perps, top and latest tweets. An alert fires when buzz
+reaches 3× with ≥ 10 tweets/h. Tweets are kept in `data/market.sqlite` (table `tweets`).
+
+Setup: copy `.env.example` to `.env` and fill one key, then restart.
+
+| Key | Provider | Price (2026) |
+|---|---|---|
+| `TWITTERAPI_IO_KEY` | [twitterapi.io](https://twitterapi.io) (third party) | ≈ $0.15 / 1,000 tweets |
+| `X_BEARER_TOKEN` | official X API v2 recent search ([developer.x.com](https://developer.x.com)) | ≈ $5 / 1,000 tweets |
+
+Reads every `X_POLL_SEC` (300 s) and stops at `X_DAILY_CAP` tweets per UTC day (3,000 ≈ $0.45 on twitterapi.io,
+200 ≈ $1 on X). Check the key: `.venv/bin/python -m backend.social`. Searches live in `SOCIAL_QUERIES`
+(`backend/config.py`). `.env` is git-ignored.
 
 ## Layout
 
@@ -123,6 +163,8 @@ in `.venv` (recreate it if the folder is moved).
 | `backend/ict.py` | Bar-by-bar port of the Pine script (FVG, mitigation, pivots, sweeps, BOS/CHoCH, OB, P/D, OR, score) |
 | `backend/stats.py` | Setup simulation (limit at FVG edge, stop at far edge, target in R), walk-forward probability, backtest |
 | `backend/portfolio.py` | Strength score, long/short pair, SOXL beta hedge, margin split, safe leverage, liquidation prices |
+| `backend/loris.py` | Loris Tools funding rates per venue, median, long/short venue spread, own history |
+| `backend/social.py` | X (Twitter) reads (twitterapi.io or X API), sentiment, buzz, daily cost cap |
 | `backend/server.py` | FastAPI: recalculates on every closed bar, polls Omni every 5 s, WebSocket push |
 | `frontend/` | lightweight-charts 4.2.3 UI (light theme, English), browser notifications + sound |
 

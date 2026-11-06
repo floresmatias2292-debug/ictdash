@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -20,9 +21,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import data, ict, lead, pair, paper, prob, stats
-from .config import (FRONTEND_DIR, GROUPS, ICT_DEFAULTS, LEAD, ORACLE_EVERY_S, PAIRS, SETTINGS, SOURCE_LABEL,
-                     SYMBOLS, TRADINGVIEW_SYMBOL)
+from . import data, ict, lead, loris, pair, paper, prob, social, stats
+from .config import (BINANCE_FAPI, FRONTEND_DIR, GROUPS, ICT_DEFAULTS, LEAD, ORACLE_EVERY_S, PAIRS, SETTINGS,
+                     SOURCE_LABEL, SYMBOLS, TRADINGVIEW_SYMBOL, use_hyperliquid_for_binance)
 from .portfolio import fee_pct, max_lev
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -37,10 +38,11 @@ RESEARCH = FRONTEND_DIR.parent / "research"
 
 STATE: dict = {}          # (symbol, tf) -> {bars, forming, res, prob}
 LIVE: dict = {}           # symbol -> Omni quote
+LORIS: dict = {}          # symbol -> funding by venue from Loris Tools
 ORACLE: dict = {}         # symbol -> {consensus (CoinGecko), venue (Binance/Hyperliquid index), last}
 PAIR_STATE: dict = {}     # pair group -> spread snapshot (β, z, history)
 ALERTS: list = []
-META = {"version": 0, "last_calc": None, "last_candles": None, "candle_error": None, "last_omni": None, "omni_error": None}
+META = {"loading": False, "history_error": {}, "version": 0, "last_calc": None, "last_candles": None, "candle_error": None, "last_omni": None, "omni_error": None}
 _recalc_lock = asyncio.Lock()
 CLIENTS: set[WebSocket] = set()
 _last_closed: dict = {}
@@ -304,9 +306,56 @@ def _row_candle(r) -> dict:
             "buy_pct": (tb / v * 100) if (tb is not None and v) else None}
 
 
+async def loris_loop():
+    """Loris Tools funding rates for every venue, every LORIS_POLL_SEC (default 60 s)."""
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                parsed = loris.parse(await loris.fetch(client))
+                LORIS.update(parsed)
+                await asyncio.to_thread(loris.save, parsed)
+                META["last_loris"], META["loris_error"] = time.time(), None
+                if not any(d["venues"] for d in parsed.values()):
+                    META["loris_error"] = ("No NVDA/AMD funding in the Loris response: the free plan returns BTC/ETH only"
+                                           if not loris.api_key() else "None of the dashboard symbols are in the Loris response")
+                await broadcast({"type": "loris", "loris": LORIS, "meta": META})
+            except Exception as e:
+                META["loris_error"] = str(e)[:200]
+                log.warning("loris: %s", e)
+            await asyncio.sleep(loris.poll_sec())
+
+
+async def social_loop():
+    """X (Twitter) tweets about the AMD / NVDA perps, every X_POLL_SEC (default 5 min), when a key is in .env."""
+    async with httpx.AsyncClient() as client:
+        while True:
+            if social.provider():
+                try:
+                    new = await social.poll(client)
+                    META["last_social"], META["social_error"] = time.time(), None
+                    seen = {a["id"] for a in ALERTS}
+                    for sym in new:
+                        s = social.summary(sym)
+                        if s and s["buzz"] and s["buzz"] >= 3 and s["h1"]["n"] >= 10:
+                            snt = s["h1"]["sent"] or 0
+                            _push(seen, sym, "X", "social", 1 if snt >= 0 else -1,
+                                  f"X buzz {s['buzz']:.1f}× ({s['h1']['n']} tweets/h) · sentiment {snt:+.2f}",
+                                  int(time.time()) // 3600 * 3600)
+                    if any(new.values()):
+                        await broadcast({"type": "social", "social": {s_: social.summary(s_) for s_ in new}, "meta": META})
+                except Exception as e:
+                    META["social_error"] = str(e)[:200]
+                    log.warning("social: %s", e)
+            await asyncio.sleep(social.poll_sec())
+
+
 def _refresh_all(full: bool):
+    errors = {}
     for sym in SYMBOLS:
-        data.refresh_history(sym, full=full)
+        e = data.refresh_history(sym, full=full)
+        if e:
+            errors[sym] = e[0][:200]
+    META["history_error"] = errors
     META["last_candles"] = time.time()
 
 
@@ -323,10 +372,39 @@ def _closed_changed() -> bool:
     return changed
 
 
+def _pick_chart_source() -> None:
+    """CHART_SOURCE=auto (default) | binance | hyperliquid. Auto: Hyperliquid when Binance blocks this country."""
+    mode = os.environ.get("CHART_SOURCE", "auto").lower()
+    if mode == "auto":
+        try:
+            code = httpx.get(f"{BINANCE_FAPI}/fapi/v1/ping", timeout=10).status_code
+        except httpx.HTTPError:
+            code = None                      # offline: keep Binance, the loops retry
+        mode = "hyperliquid" if code in (403, 451) else "binance"
+        if mode == "hyperliquid":
+            log.warning("Binance futures blocked here (HTTP %s): charting AMD/NVDA/SOXL from Hyperliquid xyz", code)
+    if mode == "hyperliquid":
+        META["chart_source"] = "hyperliquid"
+        log.info("Hyperliquid charts for %s", ", ".join(use_hyperliquid_for_binance()))
+
+
 @asynccontextmanager
 async def lifespan(app):
+    _pick_chart_source()
     full = not all(data.has_history(s) for s in SYMBOLS)
-    await asyncio.to_thread(_refresh_all, full)
+    if full:
+        # First run on this computer: the page opens right away and fills in when the download finishes.
+        META["loading"] = True
+        log.info("first start: downloading history in the background (a few minutes)")
+
+        async def first_backfill():
+            await asyncio.to_thread(_refresh_all, True)
+            META["loading"] = False
+            _closed_changed()
+            await _recalc()
+        backfill = asyncio.create_task(first_backfill())
+    else:
+        await asyncio.to_thread(_refresh_all, False)
     try:
         async with httpx.AsyncClient() as client:
             LIVE.update(await data.fetch_omni(client))
@@ -335,7 +413,8 @@ async def lifespan(app):
     _closed_changed()
     await asyncio.to_thread(lead.fit_models)
     await asyncio.to_thread(recompute)
-    tasks = [asyncio.create_task(omni_loop()), asyncio.create_task(candle_loop()), asyncio.create_task(oracle_loop())]
+    tasks = [asyncio.create_task(omni_loop()), asyncio.create_task(candle_loop()), asyncio.create_task(oracle_loop()),
+             asyncio.create_task(social_loop()), asyncio.create_task(loris_loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -439,6 +518,8 @@ def api_state(symbol: str = "NVDA"):
                        "max_lev": max_lev(symbol, SETTINGS), "spread_bps": q.get("spread_bps") or SYMBOLS[symbol]["spread_bps"]},
             "charts": {tf: _chart(symbol, tf) for tf in VIEW_TFS},
             "oracle": ORACLE.get(symbol, {}),
+            "social": social.summary(symbol),
+            "loris": LORIS.get(symbol), "loris_hist": loris.history(symbol), "loris_key": bool(loris.api_key()),
             "oracle_hist": [[_et(t), i, v] for t, i, v in data.load_oracle(symbol)],
             "tradingview": TRADINGVIEW_SYMBOL.get(symbol),
             "omni": {tf: _omni_chart(symbol, tf) for tf in VIEW_TFS},

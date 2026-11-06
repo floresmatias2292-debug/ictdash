@@ -203,10 +203,16 @@ function renderChart(tf) {
   p.candles.setMarkers(overlayData && !omni ? buildMarkers(overlayData) : []);
   if (range && p.fitted) p.chart.timeScale().setVisibleLogicalRange(range);
   else if (bars.length) { const n = bars.length; p.chart.timeScale().setVisibleLogicalRange(n < 120 ? { from: -2, to: Math.max(n + 4, 60) } : { from: n - 150, to: n + 6 }); p.fitted = true; }
+  let msg = null;
+  if (omni && bars.length < 3) msg = `Building ${S.data.market.omni} ${tf} candles from the live mark. The public Omni API has no history; the chart fills in while the server runs.`;
+  else if (!omni && !bars.length) {
+    const m = S.data.meta || {};
+    msg = m.loading ? `First start on this computer: downloading ${S.data.market.source} history. The chart appears by itself in a few minutes.`
+      : `No ${S.data.market.source} candles for ${S.sym} ${tf}.` + ((m.history_error?.[S.sym]) ? ` Error: ${m.history_error[S.sym]}. Check the internet connection / that ${S.data.market.source} is reachable from this network.` : ' Waiting for data…');
+  }
   const empty = $('.empty', p.el);
-  if (omni && bars.length < 3) {
-    if (!empty) p.el.insertAdjacentHTML('beforeend', `<div class="empty">Building ${S.data.market.omni} ${tf} candles from the live mark. The public Omni API has no history; the chart fills in while the server runs.</div>`);
-  } else empty?.remove();
+  if (msg) { if (empty) empty.textContent = msg; else p.el.insertAdjacentHTML('beforeend', `<div class="empty">${msg}</div>`); }
+  else empty?.remove();
   legend(p, null);
   badge(p);
 }
@@ -339,6 +345,8 @@ function renderPanel() {
   renderPair();
   renderLead();
   renderPaper();
+  renderSocial();
+  renderLoris();
   renderAlerts(d.alerts);
 }
 // ── paper trading: fixed leverage and margin, at the futures price ──────────
@@ -527,6 +535,64 @@ function renderPair() {
       <span>Carry long ${B} / short ${A}</span><span class="${c1['-1'] >= 0 ? 'bull' : 'bear'}">${sgn(c1['-1'])} USDC/day per 1k</span></div>
     ${pairValidation(pr)}`;
 }
+// ── Loris Tools funding ────────────────────────────────────────────────────
+function lorisSpark(hist) {
+  const lines = Object.entries(hist || {}).filter(([, pts]) => pts.length > 1);
+  if (!lines.length) return '';
+  const all = lines.flatMap(([, p]) => p), t0 = Math.min(...all.map((p) => p[0])), t1 = Math.max(...all.map((p) => p[0]));
+  let lo = Math.min(0, ...all.map((p) => p[1])), hi = Math.max(0, ...all.map((p) => p[1])); if (hi === lo) hi = lo + 1;
+  const W = 300, H = 60, x = (t) => (t - t0) / Math.max(1, t1 - t0) * W, y = (v) => H - (v - lo) / (hi - lo) * H;
+  const color = { median: 'var(--muted)', variational: 'var(--accent)', omni: 'var(--accent)', binance: '#f0b90b' };
+  return `<svg class="lspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" class="zero"/>${lines.map(([ex, p]) => `<polyline fill="none" stroke="${color[ex] || '#9c27b0'}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${p.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"><title>${ex}</title></polyline>`).join('')}</svg>
+    <div class="note">Last ${Math.round((t1 - t0) / 3600)} h, bps/8 h: ${lines.map(([ex]) => `<span style="color:${color[ex] || '#9c27b0'}">■</span> ${ex}`).join(' ')}</div>`;
+}
+function renderLoris() {
+  const d = S.data, L = d?.loris, box = $('#lorisBlock'), err = d?.meta?.loris_error;
+  if (!box) return;
+  const head = err ? `<div class="warn">${esc(err)}</div>` : '';
+  if (!L || !L.venues.length) {
+    box.innerHTML = head + (d.loris_key ? '<div class="muted">Waiting for the first Loris read…</div>'
+      : `<div class="muted">No API key.</div><div class="note">The Loris free plan only returns BTC and ETH. For ${S.sym}, get a paid key at loris.tools/pricing and add a line <code>LORIS_API_KEY=your_key</code> to the <b>.env</b> file in the project folder, then restart.</div>`);
+    return;
+  }
+  const bp = (x) => `${x >= 0 ? '+' : ''}${x.toFixed(2)}`;
+  const rows = L.venues.slice().reverse().map((v) => `<tr class="${v.label ? 'home' : ''}"><td>${esc(v.exchange)}${v.label && v.label.toLowerCase() !== v.exchange.toLowerCase() ? ` <span class="chip">${esc(v.label)}</span>` : ''}</td><td class="${v.bps_8h > 0 ? 'bear' : v.bps_8h < 0 ? 'bull' : ''}">${bp(v.bps_8h)}</td><td>${sgn(v.apr, 1)}%</td><td class="muted">${v.interval_h ? v.interval_h + 'h' : '—'}</td></tr>`).join('');
+  const o = L.omni;
+  box.innerHTML = `${head}<div class="kv">
+      <span>Omni (Variational)</span><span>${o ? `${bp(o.bps_8h)} bps/8h · ${sgn(o.apr, 1)}% APR` : 'not listed'}</span>
+      <span>Median, ${L.venues.length} venues</span><span>${bp(L.median_bps)} bps/8h</span>
+      <span>Cheapest to be long</span><span class="bull">${esc(L.best_long)}</span>
+      <span>Best to be short</span><span class="bear">${esc(L.best_short)}</span>
+      <span>Spread (short − long)</span><span>${L.spread_bps.toFixed(2)} bps/8h · ${L.spread_apr.toFixed(1)}% APR</span></div>
+    ${lorisSpark(d.loris_hist)}
+    <details><summary class="note">All venues</summary><table><tr><th>Venue</th><th>bps/8h</th><th>APR</th><th>Every</th></tr>${rows}</table></details>
+    <div class="note">Positive = longs pay shorts. Updated ${fmtTime(L.ts)} from loris.tools. Spread is before fees and price moves between venues.</div>`;
+}
+// ── X (Twitter) ────────────────────────────────────────────────────────────
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ago = (ts) => { const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60)); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`; };
+const sentTag = (x) => x == null ? '<span class="muted">—</span>' : `<span class="${x > 0.1 ? 'bull' : x < -0.1 ? 'bear' : 'muted'}">${x > 0.1 ? 'Bullish' : x < -0.1 ? 'Bearish' : 'Neutral'} ${sgn(x)}</span>`;
+function renderSocial() {
+  const s = S.data?.social, box = $('#socialBlock');
+  $('#socialWrap').style.display = s ? '' : 'none';
+  if (!s) return;
+  const err = S.data.meta?.social_error;
+  if (!s.provider) {
+    box.innerHTML = `<div class="muted">Not connected.</div><div class="note">Create a file <b>.env</b> in the project folder with one line:<br><code>TWITTERAPI_IO_KEY=your_key</code> (twitterapi.io, ≈ $0.15 / 1,000 tweets) or<br><code>X_BEARER_TOKEN=your_token</code> (official X API, ≈ $5 / 1,000 tweets),<br>then restart the dashboard. Search: <code>${esc(s.query)}</code></div>`;
+    return;
+  }
+  const h1 = s.h1, h24 = s.h24, max = Math.max(1, ...s.hourly);
+  const spark = s.hourly.map((v, i) => `<i style="height:${Math.max(4, v / max * 100)}%" title="${v} tweets, ${48 - i}h ago"></i>`).join('');
+  const tw = (t) => `<a class="tweet" href="${esc(t.url)}" target="_blank" rel="noopener"><div class="th"><b>@${esc(t.user)}</b>${t.verified ? ' <span class="vb">✓</span>' : ''} <span class="muted">${vol(t.followers)} · ${ago(t.ts)}</span>${t.perp ? ' <span class="chip">perp</span>' : ''}<span class="ts ${t.sent > 0 ? 'bull' : t.sent < 0 ? 'bear' : 'muted'}">${t.sent > 0 ? '▲' : t.sent < 0 ? '▼' : '·'}</span></div><div class="tt">${esc(t.text)}</div><div class="muted tm">♥ ${vol(t.likes)} · ⟲ ${vol(t.rts)} · 💬 ${vol(t.replies)}${t.views ? ` · 👁 ${vol(t.views)}` : ''}</div></a>`;
+  box.innerHTML = `${err ? `<div class="warn">Last X read failed: ${esc(err)}</div>` : ''}
+    <div class="kv"><span>Buzz (1 h vs 24 h pace)</span><span class="${s.buzz >= 3 ? 'warn' : ''}">${s.buzz == null ? '—' : s.buzz.toFixed(1) + '×'} · ${h1.n} tweets/h</span>
+    <span>Sentiment 1 h</span><span>${sentTag(h1.sent)}</span><span>Sentiment 24 h</span><span>${sentTag(h24.sent)}</span>
+    <span>24 h ▲ / ▼ / perp</span><span><span class="bull">${h24.bull}</span> / <span class="bear">${h24.bear}</span> / ${h24.perp} of ${h24.n}</span></div>
+    <div class="spark" title="Tweets per hour, last 48 h">${spark}</div>
+    ${s.top.length ? `<details><summary class="note">Top tweets 24 h</summary>${s.top.map(tw).join('')}</details>` : ''}
+    <div class="tweets">${s.latest.length ? s.latest.map(tw).join('') : '<div class="muted">No tweets stored yet — first read within a few minutes.</div>'}</div>
+    <div class="note">${s.provider === 'x' ? 'Official X API' : 'twitterapi.io'} · every ${Math.round(s.poll_sec / 60)} min · today ${s.usage.tweets.toLocaleString()} / ${s.usage.cap.toLocaleString()} tweets ≈ $${s.usage.usd.toFixed(2)}</div>`;
+}
 function lastPrice() {
   const c = S.data?.charts['5m'];
   if (!c) return null;
@@ -625,6 +691,12 @@ function connect() {
       renderOracle();
     } else if (m.type === 'paper') {
       S.paper = m.paper; renderPaper(); paperEvent(m.event);
+    } else if (m.type === 'loris') {
+      if (!S.data) return;
+      S.data.loris = m.loris[S.sym] || null; S.data.meta = m.meta; renderLoris();
+    } else if (m.type === 'social') {
+      if (!S.data || !m.social[S.sym]) return;
+      S.data.social = m.social[S.sym]; S.data.meta = m.meta; renderSocial();
     } else if (m.type === 'candles') {
       applyCandles(m.candles);
       setStatus(!m.meta.candle_error, m.meta.candle_error ? `${S.data?.market.source || 'Feed'} error` : `live 24/7 · ${fmtTime(m.meta.last_candles)}`);
@@ -697,4 +769,5 @@ document.documentElement.dataset.theme = S.theme;
 window.OVERLAY_HALO = C().halo;
 for (const tf of TFS) makePane(tf);
 wire(); buildLayers(); applyLayout();
-load().then(connect).catch((e) => setStatus(false, `load failed: ${e}`));
+if (typeof LightweightCharts === 'undefined') setStatus(false, 'chart library did not load (static/vendor/lightweight-charts.js)');
+else load().then(connect).catch((e) => setStatus(false, `load failed: ${e}`));
