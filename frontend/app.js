@@ -3,6 +3,11 @@ const TFS = ['5m', '15m', '1h'];
 const TF_SEC = { '5m': 300, '15m': 900, '1h': 3600 };
 const LAYERS = { oracle: 'CoinGecko consensus line', fvg: 'Fair value gaps', mitigated: 'Mitigated FVG / OB', ob: 'Order blocks', structure: 'BOS / CHoCH', sweeps: 'Liquidity sweeps', pd: 'Premium / Discount', or: 'Opening range 9:30', volume: 'Volume' };
 const CLEAN = { fvg: 4, ob: 3, structure: 3, sweeps: 2, ors: { '5m': 2, '15m': 3, '1h': 3 } };
+// Full shows more than Clean, but capped so the zones never bury the candles: the nearest active zones
+// (only the closest ones filled and labelled), recently mitigated ones as thin outlines, the latest
+// structure / sweeps, and arrows without text for the strongest FVGs.
+const FULL = { fvg: 10, ob: 6, labelled: { fvg: 4, ob: 2 }, mitigated: 10, mitBars: 300, structure: 20, sweeps: 12, markers: 30,
+  ors: { '5m': 5, '15m': 8, '1h': 10 } };
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -55,9 +60,9 @@ function shiftPayload(d) {
 
 // ── colors (TradingView palette) ───────────────────────────────────────────
 const C = () => ({
-  bull: '#089981', bear: '#f23645', bullFill: 'rgba(8,153,129,0.14)', bearFill: 'rgba(242,54,69,0.13)',
+  bull: '#089981', bear: '#f23645', bullFill: 'rgba(8,153,129,0.09)', bearFill: 'rgba(242,54,69,0.08)',
   bullLine: 'rgba(8,153,129,0.75)', bearLine: 'rgba(242,54,69,0.75)',
-  obBull: 'rgba(41,98,255,0.12)', obBullB: 'rgba(41,98,255,0.75)', obBear: 'rgba(255,152,0,0.13)', obBearB: 'rgba(255,152,0,0.85)',
+  obBull: 'rgba(41,98,255,0.07)', obBullB: 'rgba(41,98,255,0.75)', obBear: 'rgba(255,152,0,0.07)', obBearB: 'rgba(255,152,0,0.85)',
   mit: 'rgba(120,123,134,0.08)', mitB: 'rgba(120,123,134,0.5)', sweep: '#f7a600', choch: S.theme === 'dark' ? '#d1d4dc' : '#131722',
   eq: 'rgba(120,123,134,0.8)', or: 'rgba(8,153,129,0.07)', orB: 'rgba(8,153,129,0.85)', accent: '#2962ff',
   halo: S.theme === 'dark' ? 'rgba(19,23,34,0.9)' : 'rgba(255,255,255,0.92)',
@@ -80,26 +85,33 @@ function buildOverlay(c, tf) {
     items.push({ kind: 'seg', l: c.pd.x0, r: n + 15, price: c.pd.eq, color: col.eq, dash: [4, 3], text: 'EQ', textColor: col.eq, align: 'left' });
     items.push({ kind: 'seg', l: c.pd.x0, r: n + 15, price: c.pd.lo, color: 'rgba(8,153,129,0.45)', dash: [2, 3], text: 'Discount', textColor: col.bull, align: 'left' });
   }
-  if (sh.or && c.ors) for (const o of (clean ? c.ors.slice(-CLEAN.ors[tf]) : c.ors))
+  if (sh.or && c.ors) for (const o of c.ors.slice(-(clean ? CLEAN.ors : FULL.ors)[tf]))
     items.push({ kind: 'box', l: o.start, r: o.end, top: o.high, bot: o.low, fill: col.or, stroke: col.orB, width: 1.5, text: 'OR NY', textColor: col.orB });
-  const zones = (arr, k) => {
-    const a = arr.filter((z) => z.state === 'active' || (sh.mitigated && !clean));
-    return clean ? nearest(a.filter((z) => z.state === 'active'), last, k) : a;
+  // Nearest active zones first; in Full also the most recently mitigated ones (outline only, no fill).
+  const zones = (arr, key) => {
+    const act = nearest(arr.filter((z) => z.state === 'active'), last, (clean ? CLEAN : FULL)[key]);
+    const mit = clean || !sh.mitigated ? [] : arr.filter((z) => z.state !== 'active' && z.end != null && z.end >= n - FULL.mitBars)
+      .sort((a, b) => b.end - a.end).slice(0, FULL.mitigated);
+    return [...mit, ...act.slice().reverse()].map((z) => ({ z, rank: act.indexOf(z) }));     // nearest drawn last (on top)
   };
-  if (sh.ob) for (const o of zones(c.obs, CLEAN.ob)) {
-    const act = o.state === 'active';
-    items.push({ kind: 'box', l: o.left, r: act ? null : o.end, top: o.top, bot: o.bot, fill: act ? (o.bull ? col.obBull : col.obBear) : col.mit,
-      stroke: act ? (o.bull ? col.obBullB : col.obBearB) : col.mitB, dash: act ? null : [2, 2], text: act ? `${o.bull ? 'Bull' : 'Bear'} OB` : null, textColor: o.bull ? col.obBullB : col.obBearB });
+  const strong = (rank, key) => rank >= 0 && rank < (clean ? 99 : FULL.labelled[key]);
+  if (sh.ob) for (const { z: o, rank } of zones(c.obs, 'ob')) {
+    const act = rank >= 0, main = strong(rank, 'ob');
+    items.push({ kind: 'box', l: o.left, r: act ? null : o.end, top: o.top, bot: o.bot,
+      fill: act ? (main ? (o.bull ? col.obBull : col.obBear) : (o.bull ? 'rgba(41,98,255,0.04)' : 'rgba(255,152,0,0.05)')) : null,
+      stroke: act ? (o.bull ? col.obBullB : col.obBearB) : col.mitB, dash: act && main ? null : [2, 2],
+      text: main ? `${o.bull ? 'Bull' : 'Bear'} OB` : null, textColor: o.bull ? col.obBullB : col.obBearB });
   }
-  if (sh.fvg) for (const z of zones(c.fvgs, CLEAN.fvg)) {
-    const act = z.state === 'active';
-    items.push({ kind: 'box', l: z.left, r: act ? null : z.end, top: z.top, bot: z.bot, fill: act ? (z.bull ? col.bullFill : col.bearFill) : col.mit,
-      stroke: act ? (z.bull ? col.bullLine : col.bearLine) : col.mitB, width: z.comps.strong && act ? 2 : 1, dash: act ? null : [2, 2],
-      text: act ? `${z.bull ? '▲' : '▼'} FVG ${'★'.repeat(z.score) || '·'}` : null, textColor: z.bull ? col.bull : col.bear });
+  if (sh.fvg) for (const { z, rank } of zones(c.fvgs, 'fvg')) {
+    const act = rank >= 0, main = strong(rank, 'fvg');
+    items.push({ kind: 'box', l: z.left, r: act ? null : z.end, top: z.top, bot: z.bot,
+      fill: act ? (main ? (z.bull ? col.bullFill : col.bearFill) : (z.bull ? 'rgba(8,153,129,0.05)' : 'rgba(242,54,69,0.05)')) : null,
+      stroke: act ? (z.bull ? col.bullLine : col.bearLine) : col.mitB, width: z.comps.strong && main ? 2 : 1, dash: act && main ? null : [2, 2],
+      text: main ? `${z.bull ? '▲' : '▼'} FVG ${'★'.repeat(z.score) || '·'}` : null, textColor: z.bull ? col.bull : col.bear });
   }
-  if (sh.sweeps) for (const s of (clean ? c.sweeps.slice(-CLEAN.sweeps) : c.sweeps))
+  if (sh.sweeps) for (const s of c.sweeps.slice(-(clean ? CLEAN.sweeps : FULL.sweeps)))
     items.push({ kind: 'seg', l: s.from, r: s.i, price: s.price, color: col.sweep, dash: [4, 3], width: 1.5, text: `${s.kind} sweep`, textPos: s.kind === 'BSL' ? 'above' : 'below', align: 'right' });
-  if (sh.structure) for (const s of (clean ? c.structure.slice(-CLEAN.structure) : c.structure)) {
+  if (sh.structure) for (const s of c.structure.slice(-(clean ? CLEAN.structure : FULL.structure))) {
     const cl = s.kind === 'CHoCH' ? col.choch : s.dir === 1 ? col.bull : col.bear;
     items.push({ kind: 'seg', l: s.from, r: s.i, price: s.price, color: cl, width: s.kind === 'CHoCH' ? 1.5 : 1, text: `${s.kind} ${s.dir === 1 ? '▲' : '▼'}`, textPos: s.dir === 1 ? 'above' : 'below' });
   }
@@ -108,13 +120,14 @@ function buildOverlay(c, tf) {
 function buildMarkers(c) {
   if (S.detail === 'clean') return [];
   const col = C(), m = [];
+  // Strongest recent FVGs only, as small arrows without text (text over the candles hid them).
   for (const z of c.fvgs) {
     const born = z.left + 2;
-    if (!(z.comps.strong || z.score >= 3) || born >= c.candles.length) continue;
+    if (!(z.comps.strong && z.score >= 3) || born >= c.candles.length) continue;
     m.push({ time: c.candles[born].time, position: z.bull ? 'belowBar' : 'aboveBar', color: z.bull ? col.bull : col.bear,
-      shape: z.bull ? 'arrowUp' : 'arrowDown', text: `${z.size_pct.toFixed(3)}% ${'★'.repeat(z.score)}` });
+      shape: z.bull ? 'arrowUp' : 'arrowDown', size: 0.6 });
   }
-  return m.sort((a, b) => a.time - b.time);
+  return m.sort((a, b) => a.time - b.time).slice(-FULL.markers);
 }
 
 // ── panes ──────────────────────────────────────────────────────────────────
@@ -143,7 +156,8 @@ function makePane(tf) {
   const overlay = new Overlay();
   candles.attachPrimitive(overlay);
   const mark = candles.createPriceLine({ price: 0, color: '#2962ff', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'Omni' });
-  const oracle = chart.addLineSeries({ color: '#9c27b0', lineWidth: 2, lineStyle: 1, priceLineVisible: false, lastValueVisible: true, title: 'CG', crosshairMarkerVisible: false });
+  const oracle = chart.addLineSeries({ color: '#9c27b0', lineWidth: 2, lineStyle: 1, priceLineVisible: false, lastValueVisible: true, title: 'CG', crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => null });   // a reference line: never stretches the candle scale
   el.insertAdjacentHTML('beforeend', '<div class="tvbox hidden"></div>');
   const p = { tf, el, chart, candles, volume, overlay, mark, oracle, fitted: false, bars: [], tvKey: null, plines: [] };
   el.querySelectorAll('.trade button').forEach((b) => { b.onclick = () => paperOpen(Number(b.dataset.side)); });
@@ -224,7 +238,11 @@ function renderOracleLine(p) {
   const sec = TF_SEC[p.tf], pts = new Map();
   for (const [t, idx] of (S.data.oracle_hist || [])) pts.set(t - (t % sec), idx);   // last value per bar
   const first = p.bars.length ? p.bars[0].time : 0;
-  p.oracle.setData([...pts.entries()].filter(([t]) => t >= first).sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value })));
+  // Readings exist only while the server ran. The chart library joins points across gaps, so the segment that
+  // starts at the last point before a gap (> 3 bars) is made transparent instead of drawing a long diagonal.
+  const data = [...pts.entries()].filter(([t]) => t >= first).sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value }));
+  for (let i = 0; i < data.length - 1; i++) if (data[i + 1].time - data[i].time > 3 * sec) data[i].color = 'rgba(0,0,0,0)';
+  p.oracle.setData(data);
 }
 function renderOracle() {
   const o = S.data?.oracle || {}, c = o.consensus, v = o.venue, last = lastPrice();
